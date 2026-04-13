@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+Movie_recommender_systems-master.zip
+backend/.venv/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/sample_generated_resume.pdf
+frontend/node_modules/
+frontend/dist/

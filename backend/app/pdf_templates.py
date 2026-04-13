@@ -1,0 +1,736 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from html import escape
+from io import BytesIO
+from pathlib import Path
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.platypus import (
+    BaseDocTemplate,
+    Frame,
+    FrameBreak,
+    Flowable,
+    HRFlowable,
+    KeepTogether,
+    NextPageTemplate,
+    PageTemplate,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from PIL import Image
+
+from .models import ResumePayload
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+ICON_ASSET_PATHS = {
+    "phone": ROOT_DIR / "contact-logo-clean.png",
+    "mail": ROOT_DIR / "email-logo-clean.png",
+    "linkedin": ROOT_DIR / "linkedin-logo-clean.png",
+    "github": ROOT_DIR / "github-logo-clean.png",
+    "location": ROOT_DIR / "location-logo-clean.png",
+}
+
+TEXT = colors.HexColor("#0F172A")
+MUTED = colors.HexColor("#64748B")
+LIGHT_RULE = colors.HexColor("#E2E8F0")
+DEFAULT_SECTION_ORDER = ["summary", "skills", "experience", "projects", "education", "certifications"]
+
+
+def _hex(color: colors.Color) -> str:
+    return f"#{color.hexval()[2:]}"
+
+
+def _normalized_section_order(section_order: list[str] | None) -> list[str]:
+    safe_order = section_order or []
+    unique_known = [key for index, key in enumerate(safe_order) if key in DEFAULT_SECTION_ORDER and safe_order.index(key) == index]
+    missing = [key for key in DEFAULT_SECTION_ORDER if key not in unique_known]
+    return [*unique_known, *missing]
+
+
+def _safe_items(items: list[str]) -> list[str]:
+    return [item.strip() for item in items if item and item.strip()]
+
+
+@lru_cache(maxsize=16)
+def _icon_image(kind: str) -> ImageReader | None:
+    asset_path = ICON_ASSET_PATHS.get(kind)
+    if not asset_path or not asset_path.exists():
+        return None
+    image = Image.open(asset_path).convert("RGBA")
+    alpha = image.getchannel("A")
+    bbox = alpha.getbbox()
+    if bbox:
+        image = image.crop(bbox)
+    return ImageReader(image)
+
+
+class ContactLineFlowable(Flowable):
+    def __init__(self, resume: ResumePayload, width: float, accent: colors.Color, align: str = "left") -> None:
+        super().__init__()
+        self.resume = resume
+        self.max_width = width
+        self.accent = accent
+        self.align = align
+        self.font_name = "Helvetica"
+        self.font_size = 9.0
+        self.icon_size = 10.2
+        self.gap = 4.2
+        self.separator = "|"
+        self.separator_padding = 6.0
+        self.height = 14
+        self._segments: list[dict] = []
+
+    def _build_segments(self) -> list[dict]:
+        basics = self.resume.basics
+        segments = [
+            {"kind": "phone", "label": basics.phone, "url": f"tel:{basics.phone.replace(' ', '')}", "color": TEXT},
+            {"kind": "mail", "label": basics.email, "url": f"mailto:{basics.email}", "color": TEXT},
+            {"kind": "location", "label": basics.location, "url": None, "color": TEXT},
+        ]
+        if basics.linkedin:
+            segments.append({"kind": "linkedin", "label": "LinkedIn", "url": str(basics.linkedin), "color": self.accent})
+        if basics.github:
+            segments.append({"kind": "github", "label": "GitHub", "url": str(basics.github), "color": self.accent})
+        if basics.website:
+            segments.append({"kind": "website", "label": "Portfolio", "url": str(basics.website), "color": self.accent})
+        return segments
+
+    def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
+        self._segments = self._build_segments()
+        self.width = min(avail_width, self.max_width)
+        self.height = 14
+        return self.width, self.height
+
+    def _segment_width(self, segment: dict) -> float:
+        label_width = pdfmetrics.stringWidth(segment["label"], self.font_name, self.font_size)
+        icon_width = self.icon_size + self.gap
+        return icon_width + label_width
+
+    def _separator_width(self) -> float:
+        return pdfmetrics.stringWidth(self.separator, self.font_name, self.font_size) + (self.separator_padding * 2)
+
+    def _draw_phone(self, x: float, y: float) -> None:
+        icon = _icon_image("phone")
+        if icon is not None:
+            self.canv.drawImage(icon, x - 0.05, y - 1.35, width=10.4, height=10.4, mask="auto")
+
+    def _draw_mail(self, x: float, y: float) -> None:
+        icon = _icon_image("mail")
+        if icon is not None:
+            self.canv.drawImage(
+                icon,
+                x + 0.05,
+                y - 1.32,
+                width=10.0,
+                height=10.0,
+                mask="auto",
+                preserveAspectRatio=True,
+                anchor="c",
+            )
+
+    def _draw_location(self, x: float, y: float) -> None:
+        icon = _icon_image("location")
+        if icon is not None:
+            self.canv.drawImage(icon, x + 0.2, y - 1.08, width=9.2, height=9.2, mask="auto")
+
+    def _draw_linkedin(self, x: float, y: float) -> None:
+        icon = _icon_image("linkedin")
+        if icon is not None:
+            self.canv.drawImage(icon, x + 0.2, y - 0.52, width=8.75, height=8.75, mask="auto")
+
+    def _draw_github(self, x: float, y: float) -> None:
+        icon = _icon_image("github")
+        if icon is not None:
+            self.canv.drawImage(icon, x + 0.02, y - 1.02, width=10.1, height=10.1, mask="auto")
+
+    def _draw_website(self, x: float, y: float) -> None:
+        canv = self.canv
+        canv.setStrokeColor(self.accent)
+        canv.setLineWidth(0.95)
+        canv.circle(x + 5.0, y + 5.0, 4.0, fill=0, stroke=1)
+        canv.line(x + 1.7, y + 5.0, x + 8.3, y + 5.0)
+        canv.line(x + 5.0, y + 1.7, x + 5.0, y + 8.3)
+
+    def _draw_icon(self, kind: str, x: float, y: float) -> None:
+        if kind == "phone":
+            self._draw_phone(x, y)
+        elif kind == "mail":
+            self._draw_mail(x, y)
+        elif kind == "location":
+            self._draw_location(x, y)
+        elif kind == "linkedin":
+            self._draw_linkedin(x, y)
+        elif kind == "github":
+            self._draw_github(x, y)
+        elif kind == "website":
+            self._draw_website(x, y)
+
+    def draw(self) -> None:
+        canv = self.canv
+        total_width = 0.0
+        widths = []
+        for segment in self._segments:
+            width = self._segment_width(segment)
+            widths.append(width)
+            total_width += width
+        separator_width = self._separator_width()
+        total_width += separator_width * max(0, len(self._segments) - 1)
+
+        x = 0 if self.align == "left" else max(0, (self.width - total_width) / 2)
+        y = 1.55
+
+        for index, segment in enumerate(self._segments):
+            if index > 0:
+                canv.setFillColor(colors.HexColor("#7F8DB2"))
+                canv.setFont(self.font_name, self.font_size)
+                canv.drawString(x + self.separator_padding, y + 0.15, self.separator)
+                x += separator_width
+
+            icon_x = x
+            self._draw_icon(segment["kind"], icon_x, y)
+            text_x = icon_x + self.icon_size + self.gap
+            canv.setFillColor(segment["color"])
+            canv.setFont(self.font_name, self.font_size)
+            canv.drawString(text_x, y, segment["label"])
+
+            if segment["url"]:
+                label_width = pdfmetrics.stringWidth(segment["label"], self.font_name, self.font_size)
+                canv.linkURL(segment["url"], (icon_x, y - 1, text_x + label_width, y + 10), relative=1)
+
+            x += widths[index]
+
+
+class ProjectTitleFlowable(Flowable):
+    def __init__(self, item, width: float, accent: colors.Color) -> None:
+        super().__init__()
+        self.item = item
+        self.max_width = width
+        self.accent = accent
+        self.font_name = "Helvetica-Bold"
+        self.font_size = 9.0
+        self.icon_size = 10.0
+        self.gap = 6.0
+        self.height = 12.0
+
+    def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
+        self.width = min(avail_width, self.max_width)
+        return self.width, self.height
+
+    def draw(self) -> None:
+        canv = self.canv
+        baseline_y = 1.7
+        title = self.item.name
+        title_width = pdfmetrics.stringWidth(title, self.font_name, self.font_size)
+
+        canv.setFillColor(TEXT)
+        canv.setFont(self.font_name, self.font_size)
+        canv.drawString(0, baseline_y, title)
+
+        if self.item.link:
+            icon = _icon_image("github")
+            if icon is not None:
+                icon_x = min(self.width - self.icon_size, title_width + self.gap)
+                canv.drawImage(icon, icon_x, baseline_y - 1.05, width=10.0, height=10.0, mask="auto")
+                canv.linkURL(str(self.item.link), (icon_x, baseline_y - 1, icon_x + self.icon_size, baseline_y + 10), relative=1)
+
+
+def _contact_parts(resume: ResumePayload, accent: colors.Color) -> str:
+    basics = resume.basics
+    parts = [
+        escape(basics.phone),
+        escape(basics.email),
+        escape(basics.location),
+    ]
+    if basics.linkedin:
+        parts.append(f"<font color='{_hex(accent)}'><link href='{escape(str(basics.linkedin))}'>LinkedIn</link></font>")
+    if basics.github:
+        parts.append(f"<font color='{_hex(accent)}'><link href='{escape(str(basics.github))}'>GitHub</link></font>")
+    if basics.website:
+        parts.append(f"<font color='{_hex(accent)}'><link href='{escape(str(basics.website))}'>Portfolio</link></font>")
+    return "  |  ".join(parts)
+
+
+def _contact_stack(resume: ResumePayload, accent: colors.Color, styles, key: str) -> list:
+    items = [
+        escape(resume.basics.phone),
+        escape(resume.basics.email),
+        escape(resume.basics.location),
+    ]
+    if resume.basics.linkedin:
+        items.append(f"<font color='{_hex(accent)}'><link href='{escape(str(resume.basics.linkedin))}'>LinkedIn</link></font>")
+    if resume.basics.github:
+        items.append(f"<font color='{_hex(accent)}'><link href='{escape(str(resume.basics.github))}'>GitHub</link></font>")
+    if resume.basics.website:
+        items.append(f"<font color='{_hex(accent)}'><link href='{escape(str(resume.basics.website))}'>Portfolio</link></font>")
+    return [Paragraph(item, styles[key]) for item in items]
+
+
+def _build_styles(config: dict):
+    styles = getSampleStyleSheet()
+    accent = config["accent"]
+    styles.add(
+        ParagraphStyle(
+            name="Name",
+            fontName=config.get("name_font", "Helvetica-Bold"),
+            fontSize=config.get("name_size", 24),
+            leading=config.get("name_leading", 26),
+            alignment=config.get("header_align", TA_LEFT),
+            textColor=TEXT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Headline",
+            fontName=config.get("headline_font", "Helvetica"),
+            fontSize=config.get("headline_size", 11),
+            leading=config.get("headline_leading", 14),
+            alignment=config.get("header_align", TA_LEFT),
+            textColor=MUTED,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Contact",
+            fontName="Helvetica",
+            fontSize=config.get("contact_size", 9.2),
+            leading=config.get("contact_leading", 12),
+            alignment=config.get("header_align", TA_LEFT),
+            textColor=config.get("contact_text", TEXT),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SectionTitle",
+            fontName="Helvetica-Bold",
+            fontSize=config.get("section_size", 10.4),
+            leading=config.get("section_size", 10.4),
+            alignment=TA_LEFT,
+            textColor=config.get("section_text", accent),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Body",
+            fontName="Helvetica",
+            fontSize=config.get("body_size", 9.2),
+            leading=config.get("body_leading", 12.6),
+            alignment=TA_LEFT,
+            textColor=TEXT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ResumeBullet",
+            parent=styles["Body"],
+            leftIndent=config.get("bullet_indent", 12),
+            bulletIndent=2,
+            spaceAfter=config.get("bullet_space_after", 1.6),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ItemRole",
+            fontName="Helvetica-Bold",
+            fontSize=config.get("item_role_size", 9.6),
+            leading=config.get("item_role_leading", 12),
+            textColor=TEXT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ItemCompany",
+            fontName="Helvetica",
+            fontSize=config.get("item_company_size", 9.1),
+            leading=config.get("item_company_leading", 11.8),
+            textColor=MUTED,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ItemCompanyLink",
+            parent=styles["ItemCompany"],
+            textColor=accent,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ItemMeta",
+            fontName="Helvetica",
+            fontSize=config.get("item_meta_size", 8.8),
+            leading=config.get("item_meta_leading", 11),
+            textColor=MUTED,
+            alignment=TA_LEFT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarName",
+            fontName=config.get("sidebar_name_font", config.get("name_font", "Helvetica-Bold")),
+            fontSize=config.get("sidebar_name_size", 19),
+            leading=config.get("sidebar_name_leading", 21),
+            alignment=TA_LEFT,
+            textColor=config.get("sidebar_text", TEXT),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarHeadline",
+            fontName="Helvetica",
+            fontSize=config.get("sidebar_headline_size", 9.4),
+            leading=config.get("sidebar_headline_leading", 12),
+            alignment=TA_LEFT,
+            textColor=config.get("sidebar_muted", MUTED),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarContact",
+            fontName="Helvetica",
+            fontSize=config.get("sidebar_contact_size", 8.5),
+            leading=config.get("sidebar_contact_leading", 11),
+            alignment=TA_LEFT,
+            textColor=config.get("sidebar_text", TEXT),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarTitle",
+            fontName="Helvetica-Bold",
+            fontSize=9.2,
+            leading=10.4,
+            alignment=TA_LEFT,
+            textColor=config.get("sidebar_title_color", accent),
+        )
+    )
+    return styles
+
+
+def _section_header(title: str, width: float, styles, config: dict):
+    if config.get("section_variant") == "pill":
+        table = Table([[Paragraph(escape(title.upper()), styles["SectionTitle"])]], colWidths=[width])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, 0), config.get("pill_bg", colors.HexColor("#EFF6FF"))),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        return table
+
+    label = escape(title.upper() if config.get("uppercase_sections") else title)
+    table = Table(
+        [[Paragraph(label, styles["SectionTitle"]), HRFlowable(width="100%", thickness=0.75, color=config.get("rule_color", LIGHT_RULE))]],
+        colWidths=[config.get("section_label_width", 1.35) * inch, width - (config.get("section_label_width", 1.35) * inch)],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return table
+
+
+def _bullet_rows(items: list[str], styles) -> list:
+    return [Paragraph(escape(item), styles["ResumeBullet"], bulletText="\u2022") for item in _safe_items(items)]
+
+
+def _skill_rows(resume: ResumePayload, styles) -> list:
+    rows = []
+    for item in resume.skills:
+        skill_items = _safe_items(item.items)
+        if not item.name.strip() and not skill_items:
+            continue
+        rows.append(
+            Paragraph(
+                f"<font name='Helvetica-Bold'>{escape(item.name)}:</font> {escape(', '.join(skill_items))}",
+                styles["ResumeBullet"],
+                bulletText="\u2022",
+            )
+        )
+    return rows
+
+
+def _experience_block(item, width: float, styles) -> KeepTogether:
+    left = [Paragraph(escape(item.role), styles["ItemRole"])]
+    if item.company_link:
+        left.append(
+            Paragraph(
+                f"<link href='{escape(str(item.company_link))}'>{escape(item.company)}</link>",
+                styles["ItemCompanyLink"],
+            )
+        )
+    else:
+        left.append(Paragraph(escape(item.company), styles["ItemCompany"]))
+
+    right_parts = [part for part in [item.location, f"{item.start_date} - {'Current' if item.current or not item.end_date else item.end_date}"] if part]
+    table = Table(
+        [[left, Paragraph(escape(" | ".join(right_parts)), styles["ItemMeta"])]],
+        colWidths=[width * 0.66, width * 0.34],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return KeepTogether([table, Spacer(1, 2), *_bullet_rows(item.achievements, styles), Spacer(1, 5)])
+
+
+def _project_block(item, width: float, styles, accent: colors.Color, icon_link: bool = False) -> KeepTogether:
+    title_cell = ProjectTitleFlowable(item, width * 0.62, accent) if icon_link else Paragraph(
+        f"<link href='{escape(str(item.link))}'>{escape(item.name)}</link>" if item.link else escape(item.name),
+        styles["ItemRole"],
+    )
+    table = Table(
+        [[title_cell, Paragraph(escape(item.tech_stack), styles["ItemMeta"])]],
+        colWidths=[width * 0.62, width * 0.38],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return KeepTogether([table, Spacer(1, 2), *_bullet_rows(item.highlights, styles), Spacer(1, 5)])
+
+
+def _education_block(item, width: float, styles) -> KeepTogether:
+    meta = [part for part in [item.location, item.score] if part]
+    table = Table(
+        [[Paragraph(escape(item.institution), styles["ItemRole"]), Paragraph(escape(item.duration), styles["ItemMeta"])]],
+        colWidths=[width * 0.72, width * 0.28],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    blocks = [table, Paragraph(escape(item.degree), styles["ItemCompany"])]
+    if meta:
+        blocks.append(Paragraph(escape(" | ".join(meta)), styles["ItemMeta"]))
+    blocks.append(Spacer(1, 5))
+    return KeepTogether(blocks)
+
+
+def _certification_block(item, width: float, styles) -> KeepTogether:
+    table = Table(
+        [[Paragraph(escape(item.title), styles["ItemRole"]), Paragraph(escape(item.year), styles["ItemMeta"])]],
+        colWidths=[width * 0.76, width * 0.24],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    blocks = [table]
+    if item.issuer.strip():
+        blocks.append(Paragraph(escape(item.issuer), styles["ItemCompany"]))
+    blocks.append(Spacer(1, 5))
+    return KeepTogether(blocks)
+
+
+def _append_section(story: list, title: str, items: list, width: float, styles, config: dict) -> None:
+    if not items:
+        return
+    story.extend([_section_header(title, width, styles, config), Spacer(1, config.get("section_gap_after_header", 4)), *items, Spacer(1, config.get("section_gap_after", 5))])
+
+
+def _build_ordered_story(story: list, resume: ResumePayload, width: float, styles, config: dict, section_keys: list[str]) -> None:
+    for section_key in section_keys:
+        if section_key == "summary" and resume.basics.summary.strip():
+            _append_section(story, "Summary", [Paragraph(escape(resume.basics.summary), styles["Body"])], width, styles, config)
+        elif section_key == "skills" and resume.skills:
+            _append_section(story, "Skills", _skill_rows(resume, styles), width, styles, config)
+        elif section_key == "experience" and resume.experience:
+            _append_section(story, "Experience", [_experience_block(item, width, styles) for item in resume.experience], width, styles, config)
+        elif section_key == "projects" and resume.projects:
+            _append_section(
+                story,
+                "Projects",
+                [_project_block(item, width, styles, config["accent"], icon_link=config.get("project_link_icon", False)) for item in resume.projects],
+                width,
+                styles,
+                config,
+            )
+        elif section_key == "education" and resume.education:
+            _append_section(story, "Education", [_education_block(item, width, styles) for item in resume.education], width, styles, config)
+        elif section_key == "certifications" and resume.certifications:
+            title = "Certification" if len(resume.certifications) == 1 else "Certifications"
+            _append_section(story, title, [_certification_block(item, width, styles) for item in resume.certifications], width, styles, config)
+
+
+def _build_single_column_pdf(resume: ResumePayload, config: dict) -> bytes:
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=config.get("left_margin", 0.62) * inch,
+        rightMargin=config.get("right_margin", 0.62) * inch,
+        topMargin=config.get("top_margin", 0.42) * inch,
+        bottomMargin=config.get("bottom_margin", 0.32) * inch,
+        title=f"{resume.basics.full_name} Resume",
+        author=resume.basics.full_name,
+    )
+    styles = _build_styles(config)
+    story = []
+
+    if config.get("top_band"):
+        band = Table([[""]], colWidths=[doc.width], rowHeights=[config.get("top_band_height", 12)])
+        band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), config["accent"])]))
+        story.extend([band, Spacer(1, config.get("band_gap_after", 6))])
+
+    story.append(Paragraph(escape(resume.basics.full_name), styles["Name"]))
+    if resume.basics.headline.strip():
+        story.extend([Spacer(1, 3), Paragraph(escape(resume.basics.headline), styles["Headline"])])
+    story.append(Spacer(1, 4))
+    if config.get("icon_contact_line"):
+        story.append(ContactLineFlowable(resume, doc.width, config["accent"], align=config.get("contact_align", "left")))
+    else:
+        story.append(Paragraph(_contact_parts(resume, config["accent"]), styles["Contact"]))
+    story.append(Spacer(1, config.get("header_gap_after", 10)))
+
+    section_keys = _normalized_section_order(getattr(resume, "section_order", None))
+    _build_ordered_story(story, resume, doc.width, styles, config, section_keys)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
+    buffer = BytesIO()
+    doc = BaseDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.54 * inch,
+        rightMargin=0.54 * inch,
+        topMargin=0.4 * inch,
+        bottomMargin=0.32 * inch,
+        title=f"{resume.basics.full_name} Resume",
+        author=resume.basics.full_name,
+    )
+    styles = _build_styles(config)
+    sidebar_width = config.get("sidebar_width", 2.0) * inch
+    column_gap = config.get("column_gap", 0.26) * inch
+    first_sidebar = Frame(doc.leftMargin, doc.bottomMargin, sidebar_width, doc.height, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="sidebar")
+    first_main = Frame(doc.leftMargin + sidebar_width + column_gap, doc.bottomMargin, doc.width - sidebar_width - column_gap, doc.height, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="main")
+    later_frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="later")
+
+    def draw_first_page(canvas, _doc):
+        if config.get("sidebar_bg"):
+            canvas.saveState()
+            canvas.setFillColor(config["sidebar_bg"])
+            canvas.rect(_doc.leftMargin - 12, _doc.bottomMargin - 12, sidebar_width + 24, _doc.height + 24, fill=1, stroke=0)
+            canvas.restoreState()
+
+    doc.addPageTemplates(
+        [
+            PageTemplate(id="first", frames=[first_sidebar, first_main], onPage=draw_first_page),
+            PageTemplate(id="later", frames=[later_frame]),
+        ]
+    )
+
+    sidebar_story = [
+        Paragraph(escape(resume.basics.full_name), styles["SidebarName"]),
+        Spacer(1, 4),
+    ]
+    if resume.basics.headline.strip():
+        sidebar_story.extend([Paragraph(escape(resume.basics.headline), styles["SidebarHeadline"]), Spacer(1, 10)])
+    sidebar_story.extend(_contact_stack(resume, config["accent"], styles, "SidebarContact"))
+    sidebar_story.append(Spacer(1, 12))
+
+    sidebar_keys = [key for key in _normalized_section_order(getattr(resume, "section_order", None)) if key in config.get("sidebar_keys", [])]
+    _build_ordered_story(sidebar_story, resume, sidebar_width, styles, {**config, "section_label_width": 0.9, "uppercase_sections": True}, sidebar_keys)
+
+    main_story = [Spacer(1, 2)]
+
+    main_keys = [key for key in _normalized_section_order(getattr(resume, "section_order", None)) if key not in config.get("sidebar_keys", [])]
+    _build_ordered_story(main_story, resume, doc.width - sidebar_width - column_gap, styles, config, main_keys)
+
+    story = [*sidebar_story, FrameBreak(), NextPageTemplate("later"), *main_story]
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def build_additional_template_pdf(resume: ResumePayload, template_id: str) -> bytes:
+    if template_id == "contemporary-accent":
+        return _build_single_column_pdf(
+            resume,
+            {
+                "accent": colors.HexColor("#1E3A8A"),
+                "name_font": "Helvetica-Bold",
+                "name_size": 21,
+                "headline_size": 10.0,
+                "headline_leading": 11.4,
+                "contact_size": 8.7,
+                "section_text": colors.HexColor("#1E3A8A"),
+                "section_variant": "pill",
+                "pill_bg": colors.HexColor("#EFF6FF"),
+                "top_band": True,
+                "top_band_height": 8,
+                "band_gap_after": 6,
+                "header_gap_after": 7,
+                "section_gap_after_header": 3,
+                "section_gap_after": 2,
+                "body_size": 8.75,
+                "body_leading": 11.15,
+                "item_role_size": 9.0,
+                "item_role_leading": 10.8,
+                "item_company_size": 8.55,
+                "item_company_leading": 10.5,
+                "item_meta_size": 8.35,
+                "item_meta_leading": 10.1,
+                "bullet_space_after": 0.9,
+                "top_margin": 0.24,
+                "bottom_margin": 0.16,
+                "left_margin": 0.5,
+                "right_margin": 0.5,
+                "icon_contact_line": True,
+                "contact_align": "left",
+                "project_link_icon": True,
+            },
+        )
+
+    raise ValueError(f"Unsupported template: {template_id}")
