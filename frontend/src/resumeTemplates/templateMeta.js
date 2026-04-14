@@ -11,6 +11,12 @@ export const RESUME_TEMPLATES = [
     description: "Modern professional design with subtle accent framing.",
     atsLevel: "High",
   },
+  {
+    id: "executive-elegance",
+    name: "Executive Elegance",
+    description: "Elegant executive layout with a polished sidebar and refined hierarchy.",
+    atsLevel: "High",
+  },
 ];
 
 export const DEFAULT_TEMPLATE_ID = RESUME_TEMPLATES[0].id;

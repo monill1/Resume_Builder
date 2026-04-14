@@ -54,7 +54,7 @@ def parse_resume(resume: ResumePayload) -> ResumeAnalysis:
 
     project_lines: list[str] = []
     for item in resume.projects:
-        project_lines.append(" | ".join(part for part in [item.name, item.tech_stack, str(item.link or "")] if part))
+        project_lines.append(" | ".join(part for part in [item.name, item.year, item.tech_stack, str(item.link or "")] if part))
         project_lines.extend(item.highlights)
 
     education_lines = [

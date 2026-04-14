@@ -78,6 +78,7 @@ export function buildResumeViewModel(resume) {
       ...item,
       name: String(item?.name || "").trim(),
       tech_stack: String(item?.tech_stack || "").trim(),
+      year: String(item?.year || "").trim(),
       link: item?.link ? normalizeUrl(item.link) : "",
       highlights: cleanList(item?.highlights),
     }))

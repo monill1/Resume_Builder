@@ -267,20 +267,45 @@ class ProjectTitleFlowable(Flowable):
     def _draw_github_icon(self, x: float, y: float) -> None:
         self.canv.drawImage(_icon_image("github"), x, y - 1.08, width=10.2, height=10.2, mask="auto")
 
+    def _fit_title(self, max_width: float) -> str:
+        title = self.item.name.strip()
+        if not title or max_width <= 0:
+            return ""
+
+        if pdfmetrics.stringWidth(title, self.font_name, self.font_size) <= max_width:
+            return title
+
+        suffix = "..."
+        if pdfmetrics.stringWidth(suffix, self.font_name, self.font_size) > max_width:
+            return ""
+
+        trimmed = title
+        while trimmed and pdfmetrics.stringWidth(f"{trimmed}{suffix}", self.font_name, self.font_size) > max_width:
+            trimmed = trimmed[:-1].rstrip()
+        return f"{trimmed}{suffix}" if trimmed else suffix
+
     def draw(self) -> None:
         canv = self.canv
         baseline_y = 1.7
-        title = self.item.name
+        reserved_icon_width = self.icon_size + self.gap if self.item.link else 0
+        title = self._fit_title(self.width - reserved_icon_width)
         title_width = pdfmetrics.stringWidth(title, self.font_name, self.font_size)
+
+        canv.saveState()
+        clip_path = canv.beginPath()
+        clip_path.rect(0, 0, self.width, self.height)
+        canv.clipPath(clip_path, stroke=0, fill=0)
 
         canv.setFillColor(TEXT)
         canv.setFont(self.font_name, self.font_size)
         canv.drawString(0, baseline_y, title)
 
-        if self.item.link:
+        if self.item.link and self.width > self.icon_size:
             icon_x = min(self.width - self.icon_size, title_width + self.gap)
             self._draw_github_icon(icon_x, baseline_y + 0.2)
             canv.linkURL(str(self.item.link), (icon_x, baseline_y - 1, icon_x + self.icon_size, baseline_y + 10), relative=1)
+
+        canv.restoreState()
 
 
 SECTION_MIN_SPACE = {
@@ -475,9 +500,31 @@ def _experience_block(item: ExperienceItem, width: float, styles) -> KeepTogethe
 
 
 def _project_block(item: ProjectItem, width: float, styles) -> KeepTogether:
-    flowables = [ProjectTitleFlowable(item, width)]
+    rows = [[ProjectTitleFlowable(item, width - 1.05 * inch), Paragraph(escape(item.year.strip()), styles["RoleDate"])]]
     if item.tech_stack.strip():
-        flowables.append(Paragraph(f"<font color='{MUTED.hexval()}'>{escape(item.tech_stack)}</font>", styles["Body"]))
+        rows.append(
+            [
+                Paragraph(f"<font color='{MUTED.hexval()}'>{escape(item.tech_stack.strip())}</font>", styles["Body"]),
+                Paragraph("", styles["RoleDate"]),
+            ]
+        )
+
+    header = Table(
+        rows,
+        colWidths=[width - 1.05 * inch, 1.05 * inch],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    flowables = [header]
     flowables.append(Spacer(1, 2))
     for bullet in item.highlights:
         flowables.append(Paragraph(escape(bullet), styles["ResumeBullet"], bulletText="\u2022"))

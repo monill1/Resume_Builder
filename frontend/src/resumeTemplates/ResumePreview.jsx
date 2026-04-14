@@ -3,6 +3,7 @@ import { buildResumeViewModel } from "./helpers";
 import { DEFAULT_TEMPLATE_ID } from "./templateMeta";
 import ClassicProfessional from "./templates/ClassicProfessional";
 import ContemporaryAccent from "./templates/ContemporaryAccent";
+import ExecutiveElegance from "./templates/ExecutiveElegance";
 
 const PREVIEW_PAGE_WIDTH = 816;
 const PREVIEW_PAGE_HEIGHT = 1056;
@@ -10,6 +11,7 @@ const PREVIEW_PAGE_HEIGHT = 1056;
 const TEMPLATE_COMPONENTS = {
   "classic-professional": ClassicProfessional,
   "contemporary-accent": ContemporaryAccent,
+  "executive-elegance": ExecutiveElegance,
 };
 
 export default function ResumePreview({ resume, selectedTemplate }) {

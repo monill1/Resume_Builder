@@ -134,13 +134,14 @@ function ProjectsSection({ items, linkMode = "text" }) {
                   </a>
                 ) : null}
               </div>
+              {item.tech_stack ? <span className="tpl-entry-tech">{item.tech_stack}</span> : null}
               {item.link && linkMode !== "icon" ? (
                 <a className="tpl-entry-company is-link" href={item.link} target="_blank" rel="noreferrer">
                   Project Link
                 </a>
               ) : null}
             </div>
-            {item.tech_stack ? <span className="tpl-entry-tech">{item.tech_stack}</span> : null}
+            {item.year ? <span className="tpl-entry-date">{item.year}</span> : null}
           </div>
           <BulletList items={item.highlights} />
         </article>

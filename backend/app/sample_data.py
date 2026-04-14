@@ -60,6 +60,7 @@ SAMPLE_RESUME = ResumePayload.model_validate(
             {
                 "name": "Movie Recommender System",
                 "tech_stack": "Python, FastAPI, React, Pandas, NumPy, Scikit-learn",
+                "year": "",
                 "link": "https://github.com/monill1/movie-recommender-system",
                 "highlights": [
                     "Developed a full-stack recommendation system with frontend, backend, and ML layers.",

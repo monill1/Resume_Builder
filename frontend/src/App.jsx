@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "./config";
 import ResumePreviewPanel from "./resumeTemplates/ResumePreview";
 import { DEFAULT_TEMPLATE_ID, RESUME_TEMPLATES, getTemplateMeta } from "./resumeTemplates/templateMeta";
@@ -7,6 +7,7 @@ import { normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABEL
 
 const RESUME_DRAFT_KEY = "ats-resume-builder-draft";
 const RESUME_TEMPLATE_KEY = "ats-resume-builder-template";
+const WORKSPACE_VIEW_KEY = "ats-resume-builder-workspace-view";
 const ATS_DEMO_ROLE = {
   title: "Backend Developer",
   description: `Backend Developer
@@ -23,7 +24,7 @@ Responsibilities:
 };
 const emptySkill = { name: "", items: [] };
 const emptyExperience = { company: "", company_link: "", role: "", location: "", start_date: "", end_date: "", current: false, achievements: [""] };
-const emptyProject = { name: "", tech_stack: "", link: "", highlights: [""] };
+const emptyProject = { name: "", tech_stack: "", year: "", link: "", highlights: [""] };
 const emptyEducation = { institution: "", degree: "", duration: "", score: "", location: "" };
 const emptyCertification = { title: "", issuer: "", year: "" };
 const SECTION_SCORE_META = {
@@ -53,9 +54,120 @@ const SECTION_SCORE_META = {
   },
 };
 
+const RESUME_EXPORT_RULES = [
+  { path: ["basics", "full_name"], label: "Full Name", minLength: 2 },
+  { path: ["basics", "email"], label: "Email", minLength: 3, validate: (value) => /\S+@\S+\.\S+/.test(value) || "Email must be valid." },
+  { path: ["basics", "phone"], label: "Phone", minLength: 7 },
+  { path: ["basics", "location"], label: "Location", minLength: 2 },
+  { path: ["basics", "summary"], label: "Professional Summary", minLength: 30 },
+];
+
+function getValueAtPath(source, path) {
+  return path.reduce((current, key) => current?.[key], source);
+}
+
+function formatValidationLocation(path) {
+  const cleanedPath = path.filter((part) => part !== "body" && part !== "resume");
+  if (!cleanedPath.length) return "Resume data";
+
+  const lastPart = cleanedPath[cleanedPath.length - 1];
+  return String(lastPart)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatValidationDetail(detail) {
+  const label = Array.isArray(detail?.loc) ? formatValidationLocation(detail.loc) : "Resume data";
+  const message = detail?.msg || detail?.message || "is invalid.";
+  return `${label}: ${message}`;
+}
+
+function validateResumeForExport(resumePayload) {
+  for (const rule of RESUME_EXPORT_RULES) {
+    const value = String(getValueAtPath(resumePayload, rule.path) || "").trim();
+
+    if (value.length < rule.minLength) {
+      return `${rule.label} must be at least ${rule.minLength} characters.`;
+    }
+
+    if (rule.validate) {
+      const result = rule.validate(value);
+      if (result !== true) {
+        return result;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildFallbackResumeFilename(fullName) {
+  const normalizedName = String(fullName || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/g, "")
+    .replace(/\s+/g, "_");
+  return `${normalizedName || "resume"}.pdf`;
+}
+
+function getDownloadFilename(headers, fallbackFilename) {
+  const disposition = headers.get("Content-Disposition") || headers.get("content-disposition") || "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]).replace(/^["']|["']$/g, "");
+  }
+
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  if (filenameMatch?.[1]) {
+    return filenameMatch[1].trim();
+  }
+
+  return fallbackFilename;
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+async function readErrorMessage(response, fallbackMessage) {
+  const contentType = response.headers.get("Content-Type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await response.json();
+      if (typeof payload?.detail === "string" && payload.detail.trim()) {
+        return payload.detail;
+      }
+      if (Array.isArray(payload?.detail) && payload.detail.length) {
+        return payload.detail.map(formatValidationDetail).join(", ") || fallbackMessage;
+      }
+    } catch {
+      return fallbackMessage;
+    }
+  }
+
+  try {
+    const errorText = await response.text();
+    return errorText || fallbackMessage;
+  } catch {
+    return fallbackMessage;
+  }
+}
+
 function App() {
   const [resume, setResume] = useState(() => normalizeResumeData(structuredClone(sampleResume)));
   const [selectedTemplate, setSelectedTemplate] = useState(() => getTemplateMeta(window.localStorage.getItem(RESUME_TEMPLATE_KEY)).id);
+  const [activeWorkspace, setActiveWorkspace] = useState(() => (window.localStorage.getItem(WORKSPACE_VIEW_KEY) === "ats" ? "ats" : "editor"));
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready to build a polished resume and score it against a target job.");
   const [atsTargetTitle, setAtsTargetTitle] = useState("");
@@ -99,6 +211,10 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(RESUME_TEMPLATE_KEY, selectedTemplate);
   }, [selectedTemplate]);
+
+  useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_VIEW_KEY, activeWorkspace);
+  }, [activeWorkspace]);
 
   const saveDraft = () => {
     try {
@@ -219,6 +335,7 @@ function App() {
       .filter((item) => hasAnyText(item.name, item.tech_stack, item.link, ...item.highlights))
       .map((item) => ({
         ...item,
+        year: String(item.year || "").trim(),
         link: normalizeUrl(item.link) || null,
         highlights: item.highlights.filter(Boolean),
       })),
@@ -226,33 +343,44 @@ function App() {
     certifications: resume.certifications.filter((item) => hasAnyText(item.title, item.issuer, item.year)),
     section_order: normalizeSectionOrder(resume.section_order),
   });
+  const currentResumePayload = cleanPayload();
 
   const generateResume = async () => {
     setLoading(true);
     setStatus("Generating PDF...");
     try {
+      const validationMessage = validateResumeForExport(currentResumePayload);
+      if (validationMessage) {
+        throw new Error(validationMessage);
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/resume/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           template_id: selectedTemplate,
-          resume: cleanPayload(),
+          resume: currentResumePayload,
         }),
       });
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Unable to generate resume");
+        const message = await readErrorMessage(response, "Unable to generate resume");
+        throw new Error(message);
       }
+
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${resume.basics.full_name || "resume"}.pdf`;
-      anchor.click();
-      window.URL.revokeObjectURL(url);
+      if (!blob.size) {
+        throw new Error("The server returned an empty PDF file.");
+      }
+
+      const filename = getDownloadFilename(response.headers, buildFallbackResumeFilename(resume.basics.full_name));
+      downloadBlob(blob, filename);
       setStatus("Resume generated successfully.");
     } catch (error) {
-      setStatus(`Generation failed: ${error.message}`);
+      const isNetworkError = error instanceof TypeError;
+      const message = isNetworkError
+        ? `Could not reach the backend at ${API_BASE_URL}. Make sure the API server is running and allowed by CORS.`
+        : error.message;
+      setStatus(`Generation failed: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -277,7 +405,7 @@ function App() {
           job_url: normalizedJobUrl || null,
           job_description: trimmedJobDescription || null,
           target_title: trimmedTargetTitle || null,
-          resume: cleanPayload(),
+          resume: currentResumePayload,
         }),
       });
 
@@ -313,6 +441,7 @@ function App() {
     setAtsTargetTitle(ATS_DEMO_ROLE.title);
     setAtsJobDescription(ATS_DEMO_ROLE.description);
     setAtsStatus("Demo job description loaded. You can run the ATS checker immediately or swap in a real posting.");
+    setActiveWorkspace("ats");
   };
 
   const handleTemplateChange = (templateId) => {
@@ -321,9 +450,13 @@ function App() {
     setStatus(`${templateMeta.name} selected. Your resume data stays the same while the preview and PDF design update.`);
   };
 
+  const openAtsWorkspace = () => setActiveWorkspace("ats");
+  const openEditorWorkspace = () => setActiveWorkspace("editor");
+
   return (
     <div className="page-shell">
       <AppNavbar
+        activeWorkspace={activeWorkspace}
         selectedTemplate={selectedTemplate}
         templates={RESUME_TEMPLATES}
         loading={loading}
@@ -333,6 +466,8 @@ function App() {
         onGenerateResume={generateResume}
         onLoadDemoData={loadDemoData}
         onClearSavedDraft={clearSavedDraft}
+        onJumpToAts={openAtsWorkspace}
+        onJumpToEditor={openEditorWorkspace}
       />
 
       <div className="page-container">
@@ -348,177 +483,175 @@ function App() {
 
               <div className="hero-summary">
                 <span>Workflow</span>
-                <strong>Editor, PDF export, and ATS scoring in one place</strong>
-                <p>Compare your resume against a public posting or pasted job description with section scores, risk checks, and edit-ready recommendations.</p>
+                <strong>{activeWorkspace === "ats" ? "ATS workspace with live editor data" : "Editor, PDF export, and ATS scoring in one place"}</strong>
+                <p>
+                  {activeWorkspace === "ats"
+                    ? "Run ATS analysis in a dedicated page-style workspace while still using the current resume data from the editor."
+                    : "Compare your resume against a public posting or pasted job description with section scores, risk checks, and edit-ready recommendations."}
+                </p>
+                <Button
+                  variant="secondary"
+                  className="hero-ats-link"
+                  onClick={activeWorkspace === "ats" ? openEditorWorkspace : openAtsWorkspace}
+                >
+                  {activeWorkspace === "ats" ? "Open Editor Workspace" : "Open ATS Workspace"}
+                </Button>
               </div>
             </div>
           </div>
         </header>
 
-        <main className="workspace">
-          <section className="editor-panel">
-          <SectionTitle title="ATS Test" />
-          <div className="editor-card ats-card">
-            <div className="grid two-col ats-input-grid">
-              <Field label="Target Role Title" value={atsTargetTitle} onChange={setAtsTargetTitle} />
-              <label className="field ats-url-field">
-                <span>Public Job URL</span>
-                <input
-                  value={atsJobUrl}
-                  spellCheck={false}
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  placeholder="Paste a public job posting URL"
-                  onChange={(event) => setAtsJobUrl(event.target.value)}
+        {activeWorkspace === "editor" ? (
+          <main id="editor-workspace" className="workspace">
+            <section className="editor-panel">
+            <div className="panel-lead">
+              <p className="eyebrow">Resume Builder</p>
+              <h2>Resume Editor</h2>
+              <p>Keep all resume writing and ordering changes here while ATS scoring lives in its own separate page.</p>
+            </div>
+            <SectionTitle title="Basics" />
+            <div className="grid two-col">
+              <Field label="Full Name" value={resume.basics.full_name} onChange={(value) => updateBasics("full_name", value)} />
+              <Field label="Headline" value={resume.basics.headline} onChange={(value) => updateBasics("headline", value)} />
+              <Field label="Email" value={resume.basics.email} onChange={(value) => updateBasics("email", value)} spellCheck={false} />
+              <Field label="Phone" value={resume.basics.phone} onChange={(value) => updateBasics("phone", value)} spellCheck={false} />
+              <Field label="Location" value={resume.basics.location} onChange={(value) => updateBasics("location", value)} />
+              <Field label="LinkedIn URL" value={resume.basics.linkedin || ""} onChange={(value) => updateBasics("linkedin", value)} spellCheck={false} />
+              <Field label="GitHub URL" value={resume.basics.github || ""} onChange={(value) => updateBasics("github", value)} spellCheck={false} />
+              <Field label="Website URL" value={resume.basics.website || ""} onChange={(value) => updateBasics("website", value)} spellCheck={false} />
+            </div>
+            <TextArea label="Professional Summary" value={resume.basics.summary} onChange={(value) => updateBasics("summary", value)} rows={5} />
+            <p className="field-help">Spelling suggestions appear automatically from your browser while typing.</p>
+
+            <SectionTitle title="Section Order" />
+            <SectionOrderEditor order={normalizeSectionOrder(resume.section_order)} onMove={moveSection} />
+
+            <SectionTitle title="Skills" actionLabel="Add Skill Group" onAction={() => addItem("skills", emptySkill)} />
+            {resume.skills.map((item, index) => (
+              <Card key={`skill-${index}`}>
+                <div className="card-head">
+                  <strong>Skill Group {index + 1}</strong>
+                  <Button variant="ghost" onClick={() => removeItem("skills", index)}>Remove</Button>
+                </div>
+                <Field label="Category Name" value={item.name} onChange={(value) => updateArrayItem("skills", index, "name", value)} />
+                <Field label="Comma-separated Skills" value={item.items.join(", ")} onChange={(value) => handleSkillItemsChange(index, value)} />
+              </Card>
+            ))}
+
+            <SectionTitle title="Experience" actionLabel="Add Experience" onAction={() => addItem("experience", emptyExperience)} />
+            {resume.experience.map((item, index) => (
+              <Card key={`experience-${index}`}>
+                <div className="card-head">
+                  <strong>Experience {index + 1}</strong>
+                  <Button variant="ghost" onClick={() => removeItem("experience", index)}>Remove</Button>
+                </div>
+                <div className="grid two-col">
+                  <Field label="Company" value={item.company} onChange={(value) => updateArrayItem("experience", index, "company", value)} />
+                  <Field label="Company Link" value={item.company_link || ""} onChange={(value) => updateArrayItem("experience", index, "company_link", value)} spellCheck={false} />
+                  <Field label="Role" value={item.role} onChange={(value) => updateArrayItem("experience", index, "role", value)} />
+                  <Field label="Location" value={item.location} onChange={(value) => updateArrayItem("experience", index, "location", value)} />
+                  <Field label="Start Date" value={item.start_date} onChange={(value) => updateArrayItem("experience", index, "start_date", value)} spellCheck={false} />
+                  <Field label="End Date" value={item.end_date || ""} onChange={(value) => updateArrayItem("experience", index, "end_date", value)} disabled={item.current} spellCheck={false} />
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={item.current} onChange={(event) => updateArrayItem("experience", index, "current", event.target.checked)} />
+                  Current role
+                </label>
+                <BulletListEditor
+                  label="Achievements"
+                  items={item.achievements}
+                  addLabel="Add Bullet"
+                  onChange={(bulletIndex, value) => updateNestedItem("experience", index, "achievements", bulletIndex, value)}
+                  onAdd={() => addNestedItem("experience", index, "achievements")}
+                  onRemove={(bulletIndex) => removeNestedItem("experience", index, "achievements", bulletIndex)}
                 />
-              </label>
-            </div>
-            <TextArea
-              label="Job Description"
-              value={atsJobDescription}
-              onChange={setAtsJobDescription}
-              rows={8}
-              spellCheck={true}
-            />
-            <div className="ats-toolbar">
-              <Button variant="primary" className="ats-action-btn" onClick={analyzeAts} disabled={atsLoading}>
-                {atsLoading ? "Analyzing..." : "Run ATS Test"}
-              </Button>
-              <Button variant="secondary" onClick={loadDemoJob}>
-                Load Demo Job
-              </Button>
-            </div>
-            <p className="field-help ats-help">If URL scraping fails, the pasted job description becomes the fallback automatically. The score uses weighted rule-based matching, context checks, and ATS formatting heuristics.</p>
-            <p className="status-text ats-status">{atsStatus}</p>
-            {atsResult ? <ATSResultPanel result={atsResult} /> : null}
-          </div>
+              </Card>
+            ))}
 
-          <SectionTitle title="Basics" />
-          <div className="grid two-col">
-            <Field label="Full Name" value={resume.basics.full_name} onChange={(value) => updateBasics("full_name", value)} />
-            <Field label="Headline" value={resume.basics.headline} onChange={(value) => updateBasics("headline", value)} />
-            <Field label="Email" value={resume.basics.email} onChange={(value) => updateBasics("email", value)} spellCheck={false} />
-            <Field label="Phone" value={resume.basics.phone} onChange={(value) => updateBasics("phone", value)} spellCheck={false} />
-            <Field label="Location" value={resume.basics.location} onChange={(value) => updateBasics("location", value)} />
-            <Field label="LinkedIn URL" value={resume.basics.linkedin || ""} onChange={(value) => updateBasics("linkedin", value)} spellCheck={false} />
-            <Field label="GitHub URL" value={resume.basics.github || ""} onChange={(value) => updateBasics("github", value)} spellCheck={false} />
-            <Field label="Website URL" value={resume.basics.website || ""} onChange={(value) => updateBasics("website", value)} spellCheck={false} />
-          </div>
-          <TextArea label="Professional Summary" value={resume.basics.summary} onChange={(value) => updateBasics("summary", value)} rows={5} />
-          <p className="field-help">Spelling suggestions appear automatically from your browser while typing.</p>
+            <SectionTitle title="Projects" actionLabel="Add Project" onAction={() => addItem("projects", emptyProject)} />
+            {resume.projects.map((item, index) => (
+              <Card key={`project-${index}`}>
+                <div className="card-head">
+                  <strong>Project {index + 1}</strong>
+                  <Button variant="ghost" onClick={() => removeItem("projects", index)}>Remove</Button>
+                </div>
+                <div className="grid two-col">
+                  <Field label="Project Name" value={item.name} onChange={(value) => updateArrayItem("projects", index, "name", value)} />
+                  <Field label="Tech Stack" value={item.tech_stack} onChange={(value) => updateArrayItem("projects", index, "tech_stack", value)} />
+                  <Field label="Year" value={item.year || ""} onChange={(value) => updateArrayItem("projects", index, "year", value)} spellCheck={false} />
+                  <Field label="Project Link" value={item.link || ""} onChange={(value) => updateArrayItem("projects", index, "link", value)} spellCheck={false} />
+                </div>
+                <BulletListEditor
+                  label="Highlights"
+                  items={item.highlights}
+                  addLabel="Add Bullet"
+                  onChange={(bulletIndex, value) => updateNestedItem("projects", index, "highlights", bulletIndex, value)}
+                  onAdd={() => addNestedItem("projects", index, "highlights")}
+                  onRemove={(bulletIndex) => removeNestedItem("projects", index, "highlights", bulletIndex)}
+                />
+              </Card>
+            ))}
 
-          <SectionTitle title="Section Order" />
-          <SectionOrderEditor order={normalizeSectionOrder(resume.section_order)} onMove={moveSection} />
+            <SectionTitle title="Education" actionLabel="Add Education" onAction={() => addItem("education", emptyEducation)} />
+            {resume.education.map((item, index) => (
+              <Card key={`education-${index}`}>
+                <div className="card-head">
+                  <strong>Education {index + 1}</strong>
+                  <Button variant="ghost" onClick={() => removeItem("education", index)}>Remove</Button>
+                </div>
+                <div className="grid two-col">
+                  <Field label="Institution" value={item.institution} onChange={(value) => updateArrayItem("education", index, "institution", value)} />
+                  <Field label="Degree" value={item.degree} onChange={(value) => updateArrayItem("education", index, "degree", value)} />
+                  <Field label="Duration" value={item.duration} onChange={(value) => updateArrayItem("education", index, "duration", value)} />
+                  <Field label="Score / CGPA" value={item.score || ""} onChange={(value) => updateArrayItem("education", index, "score", value)} />
+                  <Field label="Mode / Location" value={item.location || ""} onChange={(value) => updateArrayItem("education", index, "location", value)} />
+                </div>
+              </Card>
+            ))}
 
-          <SectionTitle title="Skills" actionLabel="Add Skill Group" onAction={() => addItem("skills", emptySkill)} />
-          {resume.skills.map((item, index) => (
-            <Card key={`skill-${index}`}>
-              <div className="card-head">
-                <strong>Skill Group {index + 1}</strong>
-                <Button variant="ghost" onClick={() => removeItem("skills", index)}>Remove</Button>
-              </div>
-              <Field label="Category Name" value={item.name} onChange={(value) => updateArrayItem("skills", index, "name", value)} />
-              <Field label="Comma-separated Skills" value={item.items.join(", ")} onChange={(value) => handleSkillItemsChange(index, value)} />
-            </Card>
-          ))}
+            <SectionTitle title="Certifications" actionLabel="Add Certification" onAction={() => addItem("certifications", emptyCertification)} />
+            {resume.certifications.map((item, index) => (
+              <Card key={`certification-${index}`}>
+                <div className="card-head">
+                  <strong>Certification {index + 1}</strong>
+                  <Button variant="ghost" onClick={() => removeItem("certifications", index)}>Remove</Button>
+                </div>
+                <div className="grid two-col">
+                  <Field label="Title" value={item.title} onChange={(value) => updateArrayItem("certifications", index, "title", value)} />
+                  <Field label="Issuer" value={item.issuer} onChange={(value) => updateArrayItem("certifications", index, "issuer", value)} />
+                  <Field label="Year" value={item.year} onChange={(value) => updateArrayItem("certifications", index, "year", value)} />
+                </div>
+              </Card>
+            ))}
+            </section>
 
-          <SectionTitle title="Experience" actionLabel="Add Experience" onAction={() => addItem("experience", emptyExperience)} />
-          {resume.experience.map((item, index) => (
-            <Card key={`experience-${index}`}>
-              <div className="card-head">
-                <strong>Experience {index + 1}</strong>
-                <Button variant="ghost" onClick={() => removeItem("experience", index)}>Remove</Button>
-              </div>
-              <div className="grid two-col">
-                <Field label="Company" value={item.company} onChange={(value) => updateArrayItem("experience", index, "company", value)} />
-                <Field label="Company Link" value={item.company_link || ""} onChange={(value) => updateArrayItem("experience", index, "company_link", value)} spellCheck={false} />
-                <Field label="Role" value={item.role} onChange={(value) => updateArrayItem("experience", index, "role", value)} />
-                <Field label="Location" value={item.location} onChange={(value) => updateArrayItem("experience", index, "location", value)} />
-                <Field label="Start Date" value={item.start_date} onChange={(value) => updateArrayItem("experience", index, "start_date", value)} spellCheck={false} />
-                <Field label="End Date" value={item.end_date || ""} onChange={(value) => updateArrayItem("experience", index, "end_date", value)} disabled={item.current} spellCheck={false} />
-              </div>
-              <label className="checkbox-row">
-                <input type="checkbox" checked={item.current} onChange={(event) => updateArrayItem("experience", index, "current", event.target.checked)} />
-                Current role
-              </label>
-              <BulletListEditor
-                label="Achievements"
-                items={item.achievements}
-                addLabel="Add Bullet"
-                onChange={(bulletIndex, value) => updateNestedItem("experience", index, "achievements", bulletIndex, value)}
-                onAdd={() => addNestedItem("experience", index, "achievements")}
-                onRemove={(bulletIndex) => removeNestedItem("experience", index, "achievements", bulletIndex)}
-              />
-            </Card>
-          ))}
-
-          <SectionTitle title="Projects" actionLabel="Add Project" onAction={() => addItem("projects", emptyProject)} />
-          {resume.projects.map((item, index) => (
-            <Card key={`project-${index}`}>
-              <div className="card-head">
-                <strong>Project {index + 1}</strong>
-                <Button variant="ghost" onClick={() => removeItem("projects", index)}>Remove</Button>
-              </div>
-              <div className="grid two-col">
-                <Field label="Project Name" value={item.name} onChange={(value) => updateArrayItem("projects", index, "name", value)} />
-                <Field label="Tech Stack" value={item.tech_stack} onChange={(value) => updateArrayItem("projects", index, "tech_stack", value)} />
-                <Field label="Project Link" value={item.link || ""} onChange={(value) => updateArrayItem("projects", index, "link", value)} spellCheck={false} />
-              </div>
-              <BulletListEditor
-                label="Highlights"
-                items={item.highlights}
-                addLabel="Add Bullet"
-                onChange={(bulletIndex, value) => updateNestedItem("projects", index, "highlights", bulletIndex, value)}
-                onAdd={() => addNestedItem("projects", index, "highlights")}
-                onRemove={(bulletIndex) => removeNestedItem("projects", index, "highlights", bulletIndex)}
-              />
-            </Card>
-          ))}
-
-          <SectionTitle title="Education" actionLabel="Add Education" onAction={() => addItem("education", emptyEducation)} />
-          {resume.education.map((item, index) => (
-            <Card key={`education-${index}`}>
-              <div className="card-head">
-                <strong>Education {index + 1}</strong>
-                <Button variant="ghost" onClick={() => removeItem("education", index)}>Remove</Button>
-              </div>
-              <div className="grid two-col">
-                <Field label="Institution" value={item.institution} onChange={(value) => updateArrayItem("education", index, "institution", value)} />
-                <Field label="Degree" value={item.degree} onChange={(value) => updateArrayItem("education", index, "degree", value)} />
-                <Field label="Duration" value={item.duration} onChange={(value) => updateArrayItem("education", index, "duration", value)} />
-                <Field label="Score / CGPA" value={item.score || ""} onChange={(value) => updateArrayItem("education", index, "score", value)} />
-                <Field label="Mode / Location" value={item.location || ""} onChange={(value) => updateArrayItem("education", index, "location", value)} />
-              </div>
-            </Card>
-          ))}
-
-          <SectionTitle title="Certifications" actionLabel="Add Certification" onAction={() => addItem("certifications", emptyCertification)} />
-          {resume.certifications.map((item, index) => (
-            <Card key={`certification-${index}`}>
-              <div className="card-head">
-                <strong>Certification {index + 1}</strong>
-                <Button variant="ghost" onClick={() => removeItem("certifications", index)}>Remove</Button>
-              </div>
-              <div className="grid two-col">
-                <Field label="Title" value={item.title} onChange={(value) => updateArrayItem("certifications", index, "title", value)} />
-                <Field label="Issuer" value={item.issuer} onChange={(value) => updateArrayItem("certifications", index, "issuer", value)} />
-                <Field label="Year" value={item.year} onChange={(value) => updateArrayItem("certifications", index, "year", value)} />
-              </div>
-            </Card>
-          ))}
-          </section>
-
-          <section className="preview-panel">
-            <SectionTitle title="Resume Preview" />
-            <ResumePreviewPanel resume={resume} selectedTemplate={selectedTemplate} />
-          </section>
-        </main>
+            <section className="preview-panel">
+              <SectionTitle title="Resume Preview" />
+              <ResumePreviewPanel resume={resume} selectedTemplate={selectedTemplate} />
+            </section>
+          </main>
+        ) : (
+          <ATSWorkspaceSection
+            atsLoading={atsLoading}
+            atsStatus={atsStatus}
+            atsTargetTitle={atsTargetTitle}
+            atsJobUrl={atsJobUrl}
+            atsJobDescription={atsJobDescription}
+            atsResult={atsResult}
+            currentResume={currentResumePayload}
+            onTargetTitleChange={setAtsTargetTitle}
+            onJobUrlChange={setAtsJobUrl}
+            onJobDescriptionChange={setAtsJobDescription}
+            onAnalyze={analyzeAts}
+            onLoadDemoJob={loadDemoJob}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function AppNavbar({ loading, hasSavedDraft, selectedTemplate, templates, onTemplateChange, onSaveDraft, onGenerateResume, onLoadDemoData, onClearSavedDraft }) {
+function AppNavbar({ activeWorkspace, loading, hasSavedDraft, selectedTemplate, templates, onTemplateChange, onSaveDraft, onGenerateResume, onLoadDemoData, onClearSavedDraft, onJumpToAts, onJumpToEditor }) {
   return (
     <nav className="app-navbar">
       <div className="app-navbar-inner">
@@ -528,16 +661,13 @@ function AppNavbar({ loading, hasSavedDraft, selectedTemplate, templates, onTemp
         </div>
 
         <div className="app-navbar-actions">
-          <label className="template-select-shell" aria-label="Resume template selector">
-            <span className="template-select-label">Template</span>
-            <select value={selectedTemplate} onChange={(event) => onTemplateChange(event.target.value)}>
-              {templates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Button variant="nav" className={activeWorkspace === "editor" ? "nav-pill-active" : ""} onClick={onJumpToEditor}>
+            Editor
+          </Button>
+          <Button variant="nav" className={activeWorkspace === "ats" ? "nav-pill-active" : ""} onClick={onJumpToAts}>
+            ATS Test
+          </Button>
+          <TemplatePicker selectedTemplate={selectedTemplate} templates={templates} onTemplateChange={onTemplateChange} />
           <Button variant="nav" onClick={onSaveDraft}>
             Save Data
           </Button>
@@ -555,6 +685,235 @@ function AppNavbar({ loading, hasSavedDraft, selectedTemplate, templates, onTemp
         </div>
       </div>
     </nav>
+  );
+}
+
+function ATSWorkspaceSection({
+  atsLoading,
+  atsStatus,
+  atsTargetTitle,
+  atsJobUrl,
+  atsJobDescription,
+  atsResult,
+  currentResume,
+  onTargetTitleChange,
+  onJobUrlChange,
+  onJobDescriptionChange,
+  onAnalyze,
+  onLoadDemoJob,
+}) {
+  const filledSectionCount = [
+    currentResume.basics.summary?.trim(),
+    currentResume.skills.length,
+    currentResume.experience.length,
+    currentResume.projects.length,
+    currentResume.education.length,
+    currentResume.certifications.length,
+  ].filter(Boolean).length;
+
+  return (
+    <section id="ats-workbench" className="ats-section">
+      <div className="ats-shell">
+        <div className="ats-shell-head">
+          <div className="ats-shell-copy">
+            <p className="eyebrow">ATS Workspace</p>
+            <h2>Run a clean recruiter-style ATS check in its own dedicated space.</h2>
+            <p>
+              Paste a public job URL, add a role title, or drop in the description directly. The result stays organized here so your
+              resume editor and preview remain focused.
+            </p>
+          </div>
+
+          <div className="ats-shell-summary">
+            <div className="ats-summary-card">
+              <span>Current Flow</span>
+              <strong>1. Add the target role 2. Run the ATS test 3. Review gaps and exact edits</strong>
+            </div>
+            <div className="ats-summary-card">
+              <span>What it checks</span>
+              <strong>Job matching, formatting risk, missing keywords, proof in resume sections, and next-step improvements</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="ats-workbench-grid">
+          <div className="ats-composer-card">
+            <div className="ats-composer-topline">
+              <div>
+                <p className="ats-kicker">ATS Test</p>
+                <h3>Job Target Input</h3>
+              </div>
+              <span className="ats-workbench-pill">Connected to live editor data</span>
+            </div>
+
+            <div className="grid two-col ats-input-grid">
+              <Field label="Target Role Title" value={atsTargetTitle} onChange={onTargetTitleChange} />
+              <label className="field ats-url-field">
+                <span>Public Job URL</span>
+                <input
+                  value={atsJobUrl}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  placeholder="Paste a public job posting URL"
+                  onChange={(event) => onJobUrlChange(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <TextArea
+              label="Job Description"
+              value={atsJobDescription}
+              onChange={onJobDescriptionChange}
+              rows={8}
+              spellCheck={true}
+            />
+
+            <div className="ats-toolbar">
+              <Button variant="primary" className="ats-action-btn" onClick={onAnalyze} disabled={atsLoading}>
+                {atsLoading ? "Analyzing..." : "Run ATS Test"}
+              </Button>
+              <Button variant="secondary" onClick={onLoadDemoJob}>
+                Load Demo Job
+              </Button>
+            </div>
+
+            <p className="field-help ats-help">
+              If URL scraping fails, the pasted job description becomes the fallback automatically. The score uses weighted rule-based
+              matching, context checks, and ATS formatting heuristics.
+            </p>
+          </div>
+
+          <div className="ats-sidekick-card">
+            <div className="ats-sidekick-block">
+              <p className="ats-kicker">Connected Resume</p>
+              <h3>Current editor data used for ATS</h3>
+              <div className="ats-resume-sync-card">
+                <strong>{currentResume.basics.full_name || "Untitled resume"}</strong>
+                <p>{currentResume.basics.headline?.trim() || "No headline added yet."}</p>
+                <div className="ats-sync-metrics">
+                  <span>{currentResume.experience.length} experience</span>
+                  <span>{currentResume.projects.length} projects</span>
+                  <span>{currentResume.skills.length} skill groups</span>
+                  <span>{filledSectionCount} filled sections</span>
+                </div>
+                <p className="ats-sync-note">
+                  Every ATS run automatically uses the latest content from the editor section. No manual copy or save step is needed.
+                </p>
+              </div>
+            </div>
+
+            <div className="ats-sidekick-block">
+              <p className="ats-kicker">Live Status</p>
+              <h3>ATS analysis state</h3>
+              <p className="ats-sidekick-status">{atsStatus}</p>
+            </div>
+
+            <div className="ats-sidekick-block">
+              <p className="ats-kicker">Best Use</p>
+              <ul className="ats-checklist">
+                <li>Use a public job URL when possible for the most accurate requirement extraction.</li>
+                <li>Paste the full job description when a site blocks scraping or hides important keywords.</li>
+                <li>Keep your editor updated first, then rerun this section to compare improvements.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="ats-results-stage">
+          {atsResult ? (
+            <>
+              <div className="ats-results-head">
+                <div>
+                  <p className="ats-kicker">Results</p>
+                  <h3>ATS insights and recommendation panels</h3>
+                </div>
+                <span className="ats-workbench-pill is-result">Latest analysis loaded</span>
+              </div>
+              <ATSResultPanel result={atsResult} />
+            </>
+          ) : (
+            <div className="ats-empty-state">
+              <p className="ats-kicker">Ready</p>
+              <h3>Your ATS dashboard will appear here.</h3>
+              <p>Run the ATS test from this section to load scorecards, matched keywords, formatting warnings, and suggested edits.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TemplatePicker({ selectedTemplate, templates, onTemplateChange }) {
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef(null);
+  const activeTemplate = templates.find((template) => template.id === selectedTemplate) || templates[0];
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  const chooseTemplate = (templateId) => {
+    onTemplateChange(templateId);
+    setOpen(false);
+  };
+
+  return (
+    <div className={`template-picker ${open ? "is-open" : ""}`} ref={pickerRef}>
+      <span className="template-picker-label">Template</span>
+      <button
+        type="button"
+        className="template-picker-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Select resume template"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="template-picker-value">{activeTemplate?.name || "Choose template"}</span>
+        <span className="template-picker-icon" aria-hidden="true">
+          <svg viewBox="0 0 12 12" focusable="false">
+            <path d="M2 4.5 6 8l4-3.5" />
+          </svg>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="template-picker-menu" role="listbox" aria-label="Resume templates">
+          {templates.map((template) => (
+            <button
+              key={template.id}
+              type="button"
+              role="option"
+              aria-selected={template.id === selectedTemplate}
+              className={`template-picker-option ${template.id === selectedTemplate ? "is-selected" : ""}`}
+              onClick={() => chooseTemplate(template.id)}
+            >
+              <span>{template.name}</span>
+              {template.id === selectedTemplate ? <span className="template-picker-check">Active</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

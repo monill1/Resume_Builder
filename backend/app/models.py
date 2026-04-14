@@ -21,7 +21,7 @@ def _normalize_url(value: object) -> object:
 
 class Basics(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=80)
-    headline: str = Field(..., min_length=2, max_length=120)
+    headline: str = Field(default="", max_length=120)
     email: EmailStr
     phone: str = Field(..., min_length=7, max_length=25)
     location: str = Field(..., min_length=2, max_length=100)
@@ -56,6 +56,7 @@ class ExperienceItem(BaseModel):
 class ProjectItem(BaseModel):
     name: str = Field(..., min_length=2, max_length=80)
     tech_stack: str = Field(..., min_length=2, max_length=120)
+    year: str = Field(default="", max_length=20)
     link: Optional[HttpUrl] = None
     highlights: List[str] = Field(default_factory=list)
 
@@ -80,6 +81,7 @@ SectionKey = Literal["summary", "skills", "experience", "projects", "education",
 TemplateId = Literal[
     "classic-professional",
     "contemporary-accent",
+    "executive-elegance",
 ]
 
 

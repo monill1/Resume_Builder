@@ -541,6 +541,204 @@
   display: none;
 }
 
+.executive-elegance {
+  padding: 0;
+  background: linear-gradient(180deg, #fffdfa 0%, #ffffff 18%);
+  color: #142132;
+}
+
+.executive-elegance .executive-shell {
+  min-height: 100%;
+  grid-template-columns: 230px minmax(0, 1fr);
+}
+
+.executive-elegance .executive-sidebar {
+  background: linear-gradient(180deg, #f6f1e8 0%, #f9f6ef 100%);
+  border-right: 1px solid #e7dece;
+  padding: 34px 22px 28px;
+  gap: 16px;
+}
+
+.executive-elegance .executive-sidebar-copy h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 26px;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: #122033;
+}
+
+.executive-elegance .executive-sidebar-copy .resume-template-headline {
+  margin-top: 8px;
+  font-size: 11.1px;
+  line-height: 1.5;
+  color: #5d6572;
+}
+
+.executive-elegance .executive-kicker {
+  margin-bottom: 12px;
+  color: #9a6d31;
+  letter-spacing: 0.18em;
+}
+
+.executive-elegance .executive-divider {
+  height: 1px;
+  background: linear-gradient(90deg, #c8b28a 0%, #e8ddca 100%);
+}
+
+.executive-elegance .executive-contact-block {
+  gap: 10px;
+}
+
+.executive-elegance .template-sidebar-block h2,
+.executive-elegance .executive-stacked h3 {
+  margin: 0;
+  font-size: 10.8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8a6430;
+}
+
+.executive-elegance .tpl-contact-list.is-stack {
+  gap: 9px;
+}
+
+.executive-elegance .tpl-contact-link {
+  gap: 7px;
+  font-size: 10.7px;
+  line-height: 1.35;
+  color: #334155;
+}
+
+.executive-elegance .tpl-contact-link[href] {
+  color: #7a5528;
+}
+
+.executive-elegance .tpl-contact-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.executive-elegance .executive-sidebar-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.executive-elegance .executive-sidebar-list {
+  display: grid;
+  gap: 8px;
+}
+
+.executive-elegance .executive-sidebar-item {
+  display: grid;
+  gap: 2px;
+}
+
+.executive-elegance .executive-sidebar-line,
+.executive-elegance .executive-sidebar-meta {
+  margin: 0;
+  font-size: 10.15px;
+  line-height: 1.42;
+  color: #334155;
+}
+
+.executive-elegance .executive-sidebar-line strong,
+.executive-elegance .executive-cert-head strong {
+  color: #132033;
+}
+
+.executive-elegance .executive-cert-item {
+  gap: 3px;
+}
+
+.executive-elegance .executive-cert-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10.15px;
+  line-height: 1.3;
+  color: #132033;
+}
+
+.executive-elegance .executive-cert-head span {
+  flex: 0 0 auto;
+  color: #7b8794;
+  font-size: 9.7px;
+}
+
+.executive-elegance .tpl-section.executive-stacked,
+.executive-elegance .tpl-section.executive-main-section,
+.executive-elegance .tpl-section.executive-summary-section {
+  gap: 8px;
+}
+
+.executive-elegance .tpl-section.executive-stacked .tpl-section-head,
+.executive-elegance .tpl-section.executive-main-section .tpl-section-head,
+.executive-elegance .tpl-section.executive-summary-section .tpl-section-head {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.executive-elegance .tpl-section.executive-stacked .tpl-section-rule,
+.executive-elegance .tpl-section.executive-main-section .tpl-section-rule,
+.executive-elegance .tpl-section.executive-summary-section .tpl-section-rule {
+  background: #e5dccd;
+}
+
+.executive-elegance .executive-main {
+  padding: 34px 34px 28px;
+  gap: 15px;
+}
+
+.executive-elegance .executive-main .tpl-section h3 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #8a6430;
+}
+
+.executive-elegance .tpl-summary-text {
+  font-size: 11px;
+  line-height: 1.58;
+  color: #223041;
+}
+
+.executive-elegance .tpl-entry-role {
+  font-size: 11.1px;
+  color: #132033;
+}
+
+.executive-elegance .tpl-entry-company,
+.executive-elegance .tpl-entry-tech {
+  font-size: 10.45px;
+  color: #5f6b79;
+}
+
+.executive-elegance .tpl-entry-company.is-link,
+.executive-elegance .tpl-project-icon-link,
+.executive-elegance .tpl-contact-link[href] {
+  color: #7a5528;
+}
+
+.executive-elegance .tpl-entry-date,
+.executive-elegance .tpl-entry-location,
+.executive-elegance .tpl-inline-meta {
+  font-size: 10.2px;
+  color: #7b8794;
+}
+
+.executive-elegance .tpl-bullet-row {
+  font-size: 10.7px;
+  line-height: 1.44;
+}
+
+.executive-elegance .tpl-bullet-dot {
+  color: #8a6430;
+}
+
 @media print {
   .resume-sheet {
     border: 0;
