@@ -296,7 +296,7 @@ function App() {
   };
 
   const handleSkillItemsChange = (index, value) => {
-    const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+    const items = value.split(",").map((item) => item.trim());
     updateArrayItem("skills", index, "items", items);
   };
 
@@ -320,7 +320,13 @@ function App() {
       github: normalizeUrl(resume.basics.github) || null,
       website: normalizeUrl(resume.basics.website) || null,
     },
-    skills: resume.skills.filter((item) => item.name.trim() || item.items.length),
+    skills: resume.skills
+      .map((item) => ({
+        ...item,
+        name: String(item.name || "").trim(),
+        items: item.items.map((entry) => String(entry || "").trim()).filter(Boolean),
+      }))
+      .filter((item) => item.name || item.items.length),
     experience: resume.experience
       .filter((item) =>
         hasAnyText(item.company, item.company_link, item.role, item.location, item.start_date, item.end_date, ...item.achievements)
