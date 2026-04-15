@@ -15,10 +15,10 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8004
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8005
 ```
 
-Backend URL: `http://127.0.0.1:8004`
+Backend URL: `http://127.0.0.1:8005`
 
 ## Run Frontend
 
