@@ -13,11 +13,13 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import CondPageBreak, Flowable, HRFlowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import CondPageBreak, Flowable, HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from PIL import Image, ImageDraw
 
 from .models import CertificationItem, EducationItem, ExperienceItem, ProjectItem, ResumePayload, SkillCategory
 from .pdf_templates import build_additional_template_pdf
+from .rich_text import to_reportlab_markup
+from .theme_palette import build_theme_palette
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -125,10 +127,11 @@ def _icon_image(kind: str) -> ImageReader:
 
 
 class ContactLineFlowable(Flowable):
-    def __init__(self, resume: ResumePayload, width: float) -> None:
+    def __init__(self, resume: ResumePayload, width: float, accent_color: colors.Color = BLUE) -> None:
         super().__init__()
         self.resume = resume
         self.max_width = width
+        self.accent_color = accent_color
         self.font_name = "Arial"
         self.font_size = 9.0
         self.icon_size = 10.2
@@ -146,11 +149,11 @@ class ContactLineFlowable(Flowable):
             {"kind": "location", "label": basics.location, "url": None, "color": TEXT},
         ]
         if basics.linkedin:
-            segments.append({"kind": "linkedin", "label": "LinkedIn", "url": str(basics.linkedin), "color": BLUE})
+            segments.append({"kind": "linkedin", "label": "LinkedIn", "url": str(basics.linkedin), "color": self.accent_color})
         if basics.github:
-            segments.append({"kind": "github", "label": "GitHub", "url": str(basics.github), "color": BLUE})
+            segments.append({"kind": "github", "label": "GitHub", "url": str(basics.github), "color": self.accent_color})
         if basics.website:
-            segments.append({"kind": "website", "label": "Portfolio", "url": str(basics.website), "color": BLUE})
+            segments.append({"kind": "website", "label": "Portfolio", "url": str(basics.website), "color": self.accent_color})
         return segments
 
     def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
@@ -193,7 +196,7 @@ class ContactLineFlowable(Flowable):
 
     def _draw_website(self, x: float, y: float) -> None:
         canv = self.canv
-        canv.setStrokeColor(BLUE)
+        canv.setStrokeColor(self.accent_color)
         canv.setLineWidth(0.95)
         canv.circle(x + 5.0, y + 5.0, 4.0, fill=0, stroke=1)
         canv.line(x + 1.7, y + 5.0, x + 8.3, y + 5.0)
@@ -319,8 +322,10 @@ SECTION_MIN_SPACE = {
 }
 
 
-def _build_styles():
+def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles = getSampleStyleSheet()
+    section_title_color = theme_palette["accent"] if theme_palette else BLUE
+    link_color = theme_palette["accent"] if theme_palette else BLUE
     styles.add(
         ParagraphStyle(
             name="Name",
@@ -349,7 +354,7 @@ def _build_styles():
             fontSize=10.0,
             leading=10.8,
             alignment=TA_LEFT,
-            textColor=BLUE,
+            textColor=section_title_color,
         )
     )
     styles.add(
@@ -387,7 +392,7 @@ def _build_styles():
             fontName="Arial-Bold",
             fontSize=8.7,
             leading=10.3,
-            textColor=BLUE,
+            textColor=link_color,
             alignment=TA_CENTER,
         )
     )
@@ -434,9 +439,9 @@ def _build_styles():
     return styles
 
 
-def _section_header(title: str, width: float, styles) -> Table:
+def _section_header(title: str, width: float, styles, rule_color: colors.Color = LINE) -> Table:
     table = Table(
-        [[Paragraph(escape(title), styles["SectionTitle"]), HRFlowable(width="100%", thickness=0.8, color=LINE)]],
+        [[Paragraph(escape(title), styles["SectionTitle"]), HRFlowable(width="100%", thickness=0.8, color=rule_color)]],
         colWidths=[1.08 * inch, width - 1.08 * inch],
     )
     table.setStyle(
@@ -491,15 +496,21 @@ def _experience_header(item: ExperienceItem, width: float, styles) -> Table:
     return table
 
 
-def _experience_block(item: ExperienceItem, width: float, styles) -> KeepTogether:
+def _experience_block(item: ExperienceItem, width: float, styles) -> list:
     flowables = [_experience_header(item, width, styles), Spacer(1, 2)]
     for bullet in item.achievements:
-        flowables.append(Paragraph(escape(bullet), styles["ResumeBullet"], bulletText="\u2022"))
+        flowables.append(
+            Paragraph(
+                to_reportlab_markup(bullet, bold_font_name=styles["ResumeBullet"].fontName),
+                styles["ResumeBullet"],
+                bulletText="\u2022",
+            )
+        )
     flowables.append(Spacer(1, 3))
-    return KeepTogether(flowables)
+    return flowables
 
 
-def _project_block(item: ProjectItem, width: float, styles) -> KeepTogether:
+def _project_block(item: ProjectItem, width: float, styles) -> list:
     rows = [[ProjectTitleFlowable(item, width - 1.05 * inch), Paragraph(escape(item.year.strip()), styles["RoleDate"])]]
     if item.tech_stack.strip():
         rows.append(
@@ -527,12 +538,18 @@ def _project_block(item: ProjectItem, width: float, styles) -> KeepTogether:
     flowables = [header]
     flowables.append(Spacer(1, 2))
     for bullet in item.highlights:
-        flowables.append(Paragraph(escape(bullet), styles["ResumeBullet"], bulletText="\u2022"))
+        flowables.append(
+            Paragraph(
+                to_reportlab_markup(bullet, bold_font_name=styles["ResumeBullet"].fontName),
+                styles["ResumeBullet"],
+                bulletText="\u2022",
+            )
+        )
     flowables.append(Spacer(1, 3))
-    return KeepTogether(flowables)
+    return flowables
 
 
-def _education_row(item: EducationItem, width: float, styles) -> KeepTogether:
+def _education_row(item: EducationItem, width: float, styles) -> list:
     table = Table(
         [
             [
@@ -562,7 +579,7 @@ def _education_row(item: EducationItem, width: float, styles) -> KeepTogether:
     if extras:
         flowables.append(Paragraph(escape(" | ".join(extras)), styles["ResumeBullet"], bulletText="\u2022"))
     flowables.append(Spacer(1, 3))
-    return KeepTogether(flowables)
+    return flowables
 
 
 def _certification_row(item: CertificationItem, width: float, styles) -> Table:
@@ -584,34 +601,44 @@ def _certification_row(item: CertificationItem, width: float, styles) -> Table:
     return table
 
 
-def _certification_block(item: CertificationItem, width: float, styles) -> KeepTogether:
+def _certification_block(item: CertificationItem, width: float, styles) -> list:
     flowables = [_certification_row(item, width, styles)]
     issuer = item.issuer.strip()
     if issuer:
         flowables.append(Paragraph(escape(issuer), styles["ResumeBullet"], bulletText="\u2022"))
     flowables.append(Spacer(1, 3))
-    return KeepTogether(flowables)
+    return flowables
 
 
-def _append_full_section(story: list, title: str, content: list, doc: SimpleDocTemplate, styles) -> None:
+def _append_flowables(story: list, flowables: list) -> None:
+    for flowable in flowables:
+        if isinstance(flowable, (list, tuple)):
+            story.extend(flowable)
+        else:
+            story.append(flowable)
+
+
+def _append_full_section(story: list, title: str, content: list, doc: SimpleDocTemplate, styles, rule_color: colors.Color = LINE) -> None:
     if not content:
         return
     story.append(CondPageBreak(SECTION_MIN_SPACE[title]))
-    story.extend([_section_header(title, doc.width, styles), Spacer(1, 4), *content])
+    story.extend([_section_header(title, doc.width, styles, rule_color), Spacer(1, 4)])
+    _append_flowables(story, content)
 
 
-def _append_flowing_section(story: list, title: str, blocks: list, doc: SimpleDocTemplate, styles) -> None:
+def _append_flowing_section(story: list, title: str, blocks: list, doc: SimpleDocTemplate, styles, rule_color: colors.Color = LINE) -> None:
     if not blocks:
         return
     story.append(CondPageBreak(SECTION_MIN_SPACE[title]))
-    story.extend([_section_header(title, doc.width, styles), Spacer(1, 4)])
-    story.append(blocks[0])
-    for block in blocks[1:]:
-        story.append(block)
+    story.extend([_section_header(title, doc.width, styles, rule_color), Spacer(1, 4)])
+    _append_flowables(story, blocks)
 
 
-def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
-    styles = _build_styles()
+def build_classic_resume_pdf(resume: ResumePayload, section_color: str | None = None) -> bytes:
+    theme_palette = build_theme_palette(section_color) if section_color else None
+    styles = _build_styles(theme_palette)
+    accent_color = theme_palette["accent"] if theme_palette else BLUE
+    rule_color = theme_palette["accent_line"] if theme_palette else LINE
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -626,7 +653,7 @@ def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
 
     story = [
         Paragraph(escape(resume.basics.full_name.upper()), styles["Name"]),
-        ContactLineFlowable(resume, doc.width),
+        ContactLineFlowable(resume, doc.width, accent_color=accent_color),
         Spacer(1, 5),
     ]
     section_order = _normalized_section_order(getattr(resume, "section_order", None))
@@ -636,12 +663,13 @@ def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
             _append_full_section(
                 story,
                 "Summary",
-                [Paragraph(escape(resume.basics.summary), styles["Body"]), Spacer(1, 5)],
+                [Paragraph(to_reportlab_markup(resume.basics.summary, bold_font_name=styles["Body"].fontName), styles["Body"]), Spacer(1, 5)],
                 doc,
                 styles,
+                rule_color,
             )
         elif section_key == "skills" and resume.skills:
-            _append_full_section(story, "Skills", [*_skill_block(resume.skills, styles), Spacer(1, 3)], doc, styles)
+            _append_full_section(story, "Skills", [*_skill_block(resume.skills, styles), Spacer(1, 3)], doc, styles, rule_color)
         elif section_key == "experience" and resume.experience:
             _append_flowing_section(
                 story,
@@ -649,6 +677,7 @@ def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
                 [_experience_block(item, doc.width, styles) for item in resume.experience],
                 doc,
                 styles,
+                rule_color,
             )
         elif section_key == "projects" and resume.projects:
             _append_full_section(
@@ -657,6 +686,7 @@ def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
                 [_project_block(item, doc.width, styles) for item in resume.projects],
                 doc,
                 styles,
+                rule_color,
             )
         elif section_key == "education" and resume.education:
             _append_full_section(
@@ -665,17 +695,18 @@ def build_classic_resume_pdf(resume: ResumePayload) -> bytes:
                 [_education_row(item, doc.width, styles) for item in resume.education],
                 doc,
                 styles,
+                rule_color,
             )
         elif section_key == "certifications" and resume.certifications:
             certification_title = "Certification" if len(resume.certifications) == 1 else "Certifications"
             certification_content = [_certification_block(item, doc.width, styles) for item in resume.certifications]
-            _append_full_section(story, certification_title, certification_content, doc, styles)
+            _append_full_section(story, certification_title, certification_content, doc, styles, rule_color)
 
     doc.build(story)
     return buffer.getvalue()
 
 
-def build_resume_pdf(resume: ResumePayload, template_id: str = "classic-professional") -> bytes:
+def build_resume_pdf(resume: ResumePayload, template_id: str = "classic-professional", section_color: str | None = None) -> bytes:
     if template_id == "classic-professional":
-        return build_classic_resume_pdf(resume)
-    return build_additional_template_pdf(resume, template_id)
+        return build_classic_resume_pdf(resume, section_color)
+    return build_additional_template_pdf(resume, template_id, section_color)

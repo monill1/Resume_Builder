@@ -104,7 +104,10 @@ export function buildResumeViewModel(resume) {
     }))
     .filter((item) => hasText(item.title, item.issuer, item.year));
 
-  const data = { basics, contacts, skills, experience, projects, education, certifications };
+  const layout_options = {
+    executive_certifications_in_sidebar: Boolean(resume?.layout_options?.executive_certifications_in_sidebar),
+  };
+  const data = { basics, contacts, skills, experience, projects, education, certifications, layout_options };
   const orderedSections = normalizeSectionOrder(resume?.section_order).filter((sectionKey) => sectionHasContent(data, sectionKey));
 
   return {

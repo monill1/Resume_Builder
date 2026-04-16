@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+import re
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
+
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _normalize_url(value: object) -> object:
@@ -17,6 +20,20 @@ def _normalize_url(value: object) -> object:
         return f"https://{trimmed}"
 
     return trimmed
+
+
+def _normalize_hex_color(value: object) -> object:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if not HEX_COLOR_RE.fullmatch(trimmed):
+        raise ValueError("Color must be a valid 6-digit hex value like #1C5FDB.")
+    return trimmed.lower()
 
 
 class Basics(BaseModel):
@@ -85,6 +102,10 @@ TemplateId = Literal[
 ]
 
 
+class ResumeLayoutOptions(BaseModel):
+    executive_certifications_in_sidebar: bool = False
+
+
 class ResumePayload(BaseModel):
     basics: Basics
     skills: List[SkillCategory] = Field(default_factory=list)
@@ -92,6 +113,7 @@ class ResumePayload(BaseModel):
     projects: List[ProjectItem] = Field(default_factory=list)
     education: List[EducationItem] = Field(default_factory=list)
     certifications: List[CertificationItem] = Field(default_factory=list)
+    layout_options: ResumeLayoutOptions = Field(default_factory=ResumeLayoutOptions)
     section_order: List[SectionKey] = Field(
         default_factory=lambda: ["summary", "skills", "experience", "projects", "education", "certifications"]
     )
@@ -99,7 +121,58 @@ class ResumePayload(BaseModel):
 
 class ResumeGenerateRequest(BaseModel):
     template_id: TemplateId = "classic-professional"
+    section_color: Optional[str] = Field(default=None, max_length=7)
     resume: ResumePayload
+
+    _normalize_section_color = field_validator("section_color", mode="before")(_normalize_hex_color)
+
+
+class AuthCredentials(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+
+class AuthUserResponse(BaseModel):
+    id: int
+    email: EmailStr
+    created_at: Optional[str] = None
+
+
+class AuthSessionResponse(BaseModel):
+    token: str
+    user: AuthUserResponse
+
+
+class ResumeSaveRequest(BaseModel):
+    template_id: TemplateId = "classic-professional"
+    section_color: Optional[str] = Field(default=None, max_length=7)
+    resume: dict[str, Any]
+
+    _normalize_section_color = field_validator("section_color", mode="before")(_normalize_hex_color)
+
+
+class ResumeSaveResponse(BaseModel):
+    id: int
+    saved_at: Optional[str] = None
+
+
+class SavedResumeResponse(BaseModel):
+    id: Optional[int] = None
+    template_id: Optional[str] = None
+    section_color: Optional[str] = None
+    resume: Optional[dict[str, Any]] = None
+    saved_at: Optional[str] = None
+
+
+class ResumeClearResponse(BaseModel):
+    deleted_count: int
 
 
 class SampleResumeResponse(BaseModel):
@@ -217,3 +290,54 @@ class ATSAnalysisResponse(BaseModel):
     parse_preview: str
     comparison_view: List[ATSComparisonItem] = Field(default_factory=list)
     explanation_panel: ATSExplanationPanel
+
+
+class AutoFixEdit(BaseModel):
+    section: Literal["headline", "summary", "skills", "experience", "projects", "education", "certifications"]
+    target_id: str
+    original_text: str
+    new_text: str
+    keywords_addressed: List[str] = Field(default_factory=list)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reasoning: str
+    expected_score_impact: int = 0
+
+
+class AutoFixUnresolvedItem(BaseModel):
+    keyword: str
+    importance: Literal["high", "medium", "low"]
+    reason: str
+    preferred_section: Optional[str] = None
+
+
+class AutoFixPlan(BaseModel):
+    headline_edits: List[AutoFixEdit] = Field(default_factory=list)
+    summary_edits: List[AutoFixEdit] = Field(default_factory=list)
+    skill_edits: List[AutoFixEdit] = Field(default_factory=list)
+    experience_bullet_edits: List[AutoFixEdit] = Field(default_factory=list)
+    project_bullet_edits: List[AutoFixEdit] = Field(default_factory=list)
+    education_edits: List[AutoFixEdit] = Field(default_factory=list)
+    certification_edits: List[AutoFixEdit] = Field(default_factory=list)
+    unresolved_items: List[AutoFixUnresolvedItem] = Field(default_factory=list)
+    reasoning: List[str] = Field(default_factory=list)
+    estimated_impact: dict[str, int] = Field(default_factory=dict)
+    updated_sections: List[str] = Field(default_factory=list)
+
+
+class ATSOptimizeRequest(ATSAnalysisRequest):
+    target_score: int = Field(default=85, ge=60, le=100)
+    latest_analysis: Optional[ATSAnalysisResponse] = None
+
+
+class ATSOptimizeResponse(BaseModel):
+    optimized_resume: ResumePayload
+    analysis: ATSAnalysisResponse
+    previous_score: int = Field(..., ge=0, le=100)
+    updated_score: int = Field(..., ge=0, le=100)
+    score_delta: int
+    target_score: int = Field(..., ge=60, le=100)
+    target_reached: bool = False
+    applied_changes: List[str] = Field(default_factory=list)
+    remaining_gaps: List[str] = Field(default_factory=list)
+    safety_note: str
+    fix_plan: AutoFixPlan = Field(default_factory=AutoFixPlan)

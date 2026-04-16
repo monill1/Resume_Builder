@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { buildResumeViewModel } from "./helpers";
 import { DEFAULT_TEMPLATE_ID } from "./templateMeta";
+import { buildThemePalette } from "./themePalette";
 import ClassicProfessional from "./templates/ClassicProfessional";
 import ContemporaryAccent from "./templates/ContemporaryAccent";
 import ExecutiveElegance from "./templates/ExecutiveElegance";
@@ -14,7 +15,7 @@ const TEMPLATE_COMPONENTS = {
   "executive-elegance": ExecutiveElegance,
 };
 
-export default function ResumePreview({ resume, selectedTemplate }) {
+export default function ResumePreview({ resume, selectedTemplate, sectionColor }) {
   const previewStageRef = useRef(null);
   const sheetRef = useRef(null);
   const [previewScale, setPreviewScale] = useState(1);
@@ -23,6 +24,7 @@ export default function ResumePreview({ resume, selectedTemplate }) {
   const templateId = TEMPLATE_COMPONENTS[selectedTemplate] ? selectedTemplate : DEFAULT_TEMPLATE_ID;
   const TemplateComponent = TEMPLATE_COMPONENTS[templateId];
   const data = buildResumeViewModel(resume);
+  const palette = buildThemePalette(sectionColor);
 
   useEffect(() => {
     if (!previewStageRef.current || !sheetRef.current) return undefined;
@@ -58,6 +60,15 @@ export default function ResumePreview({ resume, selectedTemplate }) {
           className={`resume-sheet preview-template-${templateId}`}
           data-template-id={templateId}
           style={{
+            "--template-section-color": sectionColor,
+            "--template-accent": palette.accent,
+            "--template-accent-deep": palette.accentDeep,
+            "--template-accent-ink": palette.accentInk,
+            "--template-accent-soft": palette.accentSoft,
+            "--template-accent-surface": palette.accentSurface,
+            "--template-accent-surface-strong": palette.accentSurfaceStrong,
+            "--template-accent-line": palette.accentLine,
+            "--template-accent-border": palette.accentBorder,
             width: `${PREVIEW_PAGE_WIDTH}px`,
             minHeight: `${PREVIEW_PAGE_HEIGHT}px`,
             transform: `scale(${previewScale})`,

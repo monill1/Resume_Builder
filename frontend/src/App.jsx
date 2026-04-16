@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "./config";
+import { stripRichText } from "./richText";
 import ResumePreviewPanel from "./resumeTemplates/ResumePreview";
 import { DEFAULT_TEMPLATE_ID, RESUME_TEMPLATES, getTemplateMeta } from "./resumeTemplates/templateMeta";
 import { sampleResume } from "./sampleResume";
-import { normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABELS } from "./resumeData";
+import { normalizeLayoutOptions, normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABELS } from "./resumeData";
 
 const RESUME_DRAFT_KEY = "ats-resume-builder-draft";
 const RESUME_TEMPLATE_KEY = "ats-resume-builder-template";
+const RESUME_TEMPLATE_COLOR_KEY = "ats-resume-builder-template-section-colors";
 const WORKSPACE_VIEW_KEY = "ats-resume-builder-workspace-view";
+const AUTH_TOKEN_KEY = "ats-resume-builder-auth-token";
 const ATS_DEMO_ROLE = {
   title: "Backend Developer",
   description: `Backend Developer
@@ -61,6 +64,8 @@ const RESUME_EXPORT_RULES = [
   { path: ["basics", "location"], label: "Location", minLength: 2 },
   { path: ["basics", "summary"], label: "Professional Summary", minLength: 30 },
 ];
+const BOLD_MARKER = "**";
+const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 function getValueAtPath(source, path) {
   return path.reduce((current, key) => current?.[key], source);
@@ -84,7 +89,7 @@ function formatValidationDetail(detail) {
 
 function validateResumeForExport(resumePayload) {
   for (const rule of RESUME_EXPORT_RULES) {
-    const value = String(getValueAtPath(resumePayload, rule.path) || "").trim();
+    const value = stripRichText(getValueAtPath(resumePayload, rule.path)).trim();
 
     if (value.length < rule.minLength) {
       return `${rule.label} must be at least ${rule.minLength} characters.`;
@@ -99,6 +104,77 @@ function validateResumeForExport(resumePayload) {
   }
 
   return null;
+}
+
+function normalizeHexColor(value, fallback) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return HEX_COLOR_RE.test(normalized) ? normalized : fallback;
+}
+
+function readTemplateSectionColorMap() {
+  try {
+    const rawValue = window.localStorage.getItem(RESUME_TEMPLATE_COLOR_KEY);
+    const parsedValue = rawValue ? JSON.parse(rawValue) : {};
+    if (!parsedValue || typeof parsedValue !== "object") return {};
+
+    return Object.fromEntries(
+      Object.entries(parsedValue)
+        .filter(([templateId, color]) => typeof templateId === "string" && HEX_COLOR_RE.test(String(color || "")))
+        .map(([templateId, color]) => [templateId, String(color).toLowerCase()])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function getTemplateSectionColor(templateId, colorMap) {
+  const templateMeta = getTemplateMeta(templateId);
+  return normalizeHexColor(colorMap?.[templateMeta.id], templateMeta.defaultSectionColor);
+}
+
+function updateSelectionAfterFormat(input, selectionStart, selectionEnd) {
+  window.requestAnimationFrame(() => {
+    input.focus();
+    input.setSelectionRange(selectionStart, selectionEnd);
+  });
+}
+
+function applyBoldFormatting(input, value, onChange) {
+  if (!input) return;
+
+  const text = String(value || "");
+  const selectionStart = input.selectionStart ?? 0;
+  const selectionEnd = input.selectionEnd ?? selectionStart;
+
+  if (selectionStart === selectionEnd) {
+    const nextValue = `${text.slice(0, selectionStart)}${BOLD_MARKER}${BOLD_MARKER}${text.slice(selectionEnd)}`;
+    onChange(nextValue);
+    updateSelectionAfterFormat(input, selectionStart + BOLD_MARKER.length, selectionStart + BOLD_MARKER.length);
+    return;
+  }
+
+  const before = text.slice(0, selectionStart);
+  const selectedText = text.slice(selectionStart, selectionEnd);
+  const after = text.slice(selectionEnd);
+  const isWrapped = before.endsWith(BOLD_MARKER) && after.startsWith(BOLD_MARKER);
+
+  if (isWrapped) {
+    const nextValue = `${before.slice(0, -BOLD_MARKER.length)}${selectedText}${after.slice(BOLD_MARKER.length)}`;
+    onChange(nextValue);
+    updateSelectionAfterFormat(input, selectionStart - BOLD_MARKER.length, selectionEnd - BOLD_MARKER.length);
+    return;
+  }
+
+  const nextValue = `${before}${BOLD_MARKER}${selectedText}${BOLD_MARKER}${after}`;
+  onChange(nextValue);
+  updateSelectionAfterFormat(input, selectionStart + BOLD_MARKER.length, selectionEnd + BOLD_MARKER.length);
+}
+
+function handleBoldShortcut(event, input, value, onChange) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+    event.preventDefault();
+    applyBoldFormatting(input, value, onChange);
+  }
 }
 
 function buildFallbackResumeFilename(fullName) {
@@ -167,21 +243,111 @@ async function readErrorMessage(response, fallbackMessage) {
 function App() {
   const [resume, setResume] = useState(() => normalizeResumeData(structuredClone(sampleResume)));
   const [selectedTemplate, setSelectedTemplate] = useState(() => getTemplateMeta(window.localStorage.getItem(RESUME_TEMPLATE_KEY)).id);
+  const [templateSectionColors, setTemplateSectionColors] = useState(() => readTemplateSectionColorMap());
   const [activeWorkspace, setActiveWorkspace] = useState(() => (window.localStorage.getItem(WORKSPACE_VIEW_KEY) === "ats" ? "ats" : "editor"));
+  const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_TOKEN_KEY) || "");
+  const [authUser, setAuthUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(() => Boolean(window.localStorage.getItem(AUTH_TOKEN_KEY)));
+  const [authMode, setAuthMode] = useState("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authStatus, setAuthStatus] = useState("Sign in to save your resume data in PostgreSQL.");
+  const [authLoading, setAuthLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready to build a polished resume and score it against a target job.");
   const [atsTargetTitle, setAtsTargetTitle] = useState("");
   const [atsJobUrl, setAtsJobUrl] = useState("");
   const [atsJobDescription, setAtsJobDescription] = useState("");
   const [atsLoading, setAtsLoading] = useState(false);
+  const [atsFixing, setAtsFixing] = useState(false);
   const [atsStatus, setAtsStatus] = useState("Paste a public job URL, a job description, or both to run a recruiter-style ATS check.");
   const [atsResult, setAtsResult] = useState(null);
+  const [atsOptimization, setAtsOptimization] = useState(null);
   const [hasSavedDraft, setHasSavedDraft] = useState(false);
 
   const hasAnyText = (...values) => values.some((value) => String(value || "").trim());
+  const authHeaders = (headers = {}) => ({
+    ...headers,
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    async function verifySession() {
+      if (!authToken) {
+        setAuthUser(null);
+        setAuthChecking(false);
+        return;
+      }
+
+      setAuthChecking(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          throw new Error("Session expired.");
+        }
+        const data = await response.json();
+        if (!active) return;
+        setAuthUser(data);
+      } catch {
+        if (!active) return;
+        window.localStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthToken("");
+        setAuthUser(null);
+        setAuthStatus("Please sign in again to continue.");
+      } finally {
+        if (active) setAuthChecking(false);
+      }
+    }
+
+    verifySession();
+    return () => {
+      active = false;
+    };
+  }, [authToken]);
 
   useEffect(() => {
     async function hydrateFromBackend() {
+      if (!authToken) return;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/resume/latest`, {
+          headers: authHeaders(),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.resume) {
+            setResume(normalizeResumeData(data.resume));
+            if (data.template_id) {
+              setSelectedTemplate(getTemplateMeta(data.template_id).id);
+            }
+            if (data.template_id && HEX_COLOR_RE.test(String(data.section_color || ""))) {
+              setTemplateSectionColors((current) => ({
+                ...current,
+                [getTemplateMeta(data.template_id).id]: String(data.section_color).toLowerCase(),
+              }));
+            }
+            setHasSavedDraft(true);
+            setStatus("Saved database draft restored. You can continue where you left off.");
+            return;
+          }
+          setHasSavedDraft(false);
+          setStatus("Signed in. No saved database draft found yet.");
+          return;
+        }
+        if (response.status === 401) {
+          window.localStorage.removeItem(AUTH_TOKEN_KEY);
+          setAuthToken("");
+          setAuthStatus("Your session expired. Sign in again to load saved data.");
+          return;
+        }
+      } catch {
+        // Fall back to browser storage or bundled sample data when the backend is offline.
+      }
+
       try {
         const savedDraft = window.localStorage.getItem(RESUME_DRAFT_KEY);
         if (savedDraft) {
@@ -206,38 +372,149 @@ function App() {
     }
 
     hydrateFromBackend();
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     window.localStorage.setItem(RESUME_TEMPLATE_KEY, selectedTemplate);
   }, [selectedTemplate]);
 
   useEffect(() => {
+    window.localStorage.setItem(RESUME_TEMPLATE_COLOR_KEY, JSON.stringify(templateSectionColors));
+  }, [templateSectionColors]);
+
+  useEffect(() => {
     window.localStorage.setItem(WORKSPACE_VIEW_KEY, activeWorkspace);
   }, [activeWorkspace]);
 
-  const saveDraft = () => {
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthStatus(authMode === "signup" ? "Creating your account..." : "Signing you in...");
+
     try {
-      window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(resume));
-      setHasSavedDraft(true);
-      setStatus("Draft saved successfully. It will restore automatically next time.");
-    } catch {
-      setStatus("Unable to save the draft in this browser.");
+      const response = await fetch(`${API_BASE_URL}/api/auth/${authMode === "signup" ? "signup" : "login"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: authEmail.trim(),
+          password: authPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await readErrorMessage(response, authMode === "signup" ? "Unable to create account." : "Unable to sign in.");
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      window.localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      setAuthToken(data.token);
+      setAuthUser(data.user);
+      setAuthPassword("");
+      setHasSavedDraft(false);
+      setStatus("Signed in. Your resume data will now save to PostgreSQL.");
+      setAuthStatus("Signed in successfully.");
+    } catch (error) {
+      setAuthStatus(error.message);
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  const clearSavedDraft = () => {
+  const logOut = async () => {
+    const token = authToken;
     try {
+      if (token) {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+    } catch {
+      // The local session is still cleared even if the backend is unreachable.
+    }
+
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    window.localStorage.removeItem(RESUME_DRAFT_KEY);
+    setAuthToken("");
+    setAuthUser(null);
+    setHasSavedDraft(false);
+    setResume(normalizeResumeData(structuredClone(sampleResume)));
+    setAuthStatus("Signed out successfully.");
+  };
+
+  const saveDraft = async () => {
+    setStatus("Saving resume data to PostgreSQL...");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/resume/save`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          template_id: selectedTemplate,
+          section_color: currentSectionColor,
+          resume,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await readErrorMessage(response, "Unable to save resume data");
+        throw new Error(message);
+      }
+
+      try {
+        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(resume));
+      } catch {
+        // Database save succeeded, so browser storage is only a convenience.
+      }
+      setHasSavedDraft(true);
+      setStatus("Resume data saved to PostgreSQL successfully.");
+    } catch (error) {
+      try {
+        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(resume));
+        setHasSavedDraft(true);
+        setStatus(`Database save failed, but a browser fallback draft was saved: ${error.message}`);
+      } catch {
+        setStatus(`Unable to save the draft: ${error.message}`);
+      }
+    }
+  };
+
+  const clearSavedDraft = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/resume/saved`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!response.ok) {
+        const message = await readErrorMessage(response, "Unable to clear saved database drafts");
+        throw new Error(message);
+      }
       window.localStorage.removeItem(RESUME_DRAFT_KEY);
       setHasSavedDraft(false);
-      setStatus("Saved draft cleared.");
-    } catch {
-      setStatus("Unable to clear the saved draft.");
+      setStatus("Saved database drafts cleared.");
+    } catch (error) {
+      try {
+        window.localStorage.removeItem(RESUME_DRAFT_KEY);
+        setHasSavedDraft(false);
+      } catch {
+        // Keep the database error visible below.
+      }
+      setStatus(`Unable to clear saved database drafts: ${error.message}`);
     }
   };
 
   const updateBasics = (key, value) => {
     setResume((current) => ({ ...current, basics: { ...current.basics, [key]: value } }));
+  };
+
+  const updateLayoutOption = (key, value) => {
+    setResume((current) => ({
+      ...current,
+      layout_options: {
+        ...normalizeLayoutOptions(current.layout_options),
+        [key]: value,
+      },
+    }));
   };
 
   const updateArrayItem = (section, index, key, value) => {
@@ -300,6 +577,22 @@ function App() {
     updateArrayItem("skills", index, "items", items);
   };
 
+  const selectedTemplateMeta = getTemplateMeta(selectedTemplate);
+  const currentSectionColor = getTemplateSectionColor(selectedTemplate, templateSectionColors);
+
+  const updateTemplateSectionColor = (templateId, nextColor) => {
+    const normalizedColor = normalizeHexColor(nextColor, getTemplateMeta(templateId).defaultSectionColor);
+    setTemplateSectionColors((current) => ({ ...current, [templateId]: normalizedColor }));
+  };
+
+  const resetTemplateSectionColor = (templateId) => {
+    setTemplateSectionColors((current) => {
+      const nextColors = { ...current };
+      delete nextColors[templateId];
+      return nextColors;
+    });
+  };
+
   const moveSection = (sectionKey, direction) => {
     setResume((current) => {
       const order = normalizeSectionOrder(current.section_order);
@@ -347,9 +640,27 @@ function App() {
       })),
     education: resume.education.filter((item) => hasAnyText(item.institution, item.degree, item.duration, item.score, item.location)),
     certifications: resume.certifications.filter((item) => hasAnyText(item.title, item.issuer, item.year)),
+    layout_options: normalizeLayoutOptions(resume.layout_options),
     section_order: normalizeSectionOrder(resume.section_order),
   });
   const currentResumePayload = cleanPayload();
+
+  const buildAtsRequestPayload = () => {
+    const normalizedJobUrl = normalizeUrl(atsJobUrl);
+    const trimmedJobDescription = atsJobDescription.trim();
+    const trimmedTargetTitle = atsTargetTitle.trim();
+
+    return {
+      normalizedJobUrl,
+      trimmedJobDescription,
+      requestBody: {
+        job_url: normalizedJobUrl || null,
+        job_description: trimmedJobDescription || null,
+        target_title: trimmedTargetTitle || null,
+        resume: currentResumePayload,
+      },
+    };
+  };
 
   const generateResume = async () => {
     setLoading(true);
@@ -362,9 +673,10 @@ function App() {
 
       const response = await fetch(`${API_BASE_URL}/api/resume/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           template_id: selectedTemplate,
+          section_color: currentSectionColor,
           resume: currentResumePayload,
         }),
       });
@@ -393,26 +705,20 @@ function App() {
   };
 
   const analyzeAts = async () => {
-    const normalizedJobUrl = normalizeUrl(atsJobUrl);
-    const trimmedJobDescription = atsJobDescription.trim();
-    const trimmedTargetTitle = atsTargetTitle.trim();
+    const { normalizedJobUrl, trimmedJobDescription, requestBody } = buildAtsRequestPayload();
     if (!normalizedJobUrl && !trimmedJobDescription) {
       setAtsStatus("Add a public job link or paste the job description so the ATS checker has target requirements.");
       return;
     }
 
     setAtsLoading(true);
+    setAtsOptimization(null);
     setAtsStatus("Extracting job requirements, scoring resume evidence, and checking ATS formatting risk...");
     try {
       const response = await fetch(`${API_BASE_URL}/api/ats/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job_url: normalizedJobUrl || null,
-          job_description: trimmedJobDescription || null,
-          target_title: trimmedTargetTitle || null,
-          resume: currentResumePayload,
-        }),
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -438,8 +744,83 @@ function App() {
     }
   };
 
+  const autoFixResume = async () => {
+    const { normalizedJobUrl, trimmedJobDescription, requestBody } = buildAtsRequestPayload();
+    if (!normalizedJobUrl && !trimmedJobDescription) {
+      setAtsStatus("Add a public job link or paste the job description before using Auto Fix.");
+      return;
+    }
+
+    setAtsFixing(true);
+    setAtsStatus("Rewriting the resume with ATS-safe edits, surfacing supported JD keywords, and recalculating the score...");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ats/optimize`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ ...requestBody, target_score: 100 }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let message = "Unable to optimize the resume.";
+        try {
+          const parsed = JSON.parse(errorText);
+          message = parsed?.detail || message;
+        } catch {
+          message = errorText || message;
+        }
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      const normalizedOptimizedResume = normalizeResumeData(data.optimized_resume);
+      const normalizedCurrentResume = normalizeResumeData(structuredClone(resume));
+      const resumeChanged = JSON.stringify(normalizedOptimizedResume) !== JSON.stringify(normalizedCurrentResume);
+      setResume(normalizedOptimizedResume);
+      setAtsResult(data.analysis);
+      setAtsOptimization(data);
+      setStatus("ATS auto-fix updated the editor data. Review the refreshed resume content and preview.");
+      try {
+        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(normalizedOptimizedResume));
+        setHasSavedDraft(true);
+      } catch {
+        // Ignore local save failures and keep the in-memory update.
+      }
+      try {
+        await fetch(`${API_BASE_URL}/api/resume/save`, {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            template_id: selectedTemplate,
+            section_color: currentSectionColor,
+            resume: normalizedOptimizedResume,
+          }),
+        });
+      } catch {
+        // The optimize endpoint already stores the full optimization record.
+      }
+      const noScoreSafeEdits = data.applied_changes?.[0]?.startsWith("No score-safe");
+      if (data.score_delta > 0) {
+        setAtsStatus(`Auto-fix updated the live resume and improved the ATS score to ${data.updated_score}/100. This is the strongest score the tool could safely reach from your current resume evidence.`);
+      } else if (noScoreSafeEdits) {
+        setAtsStatus(`Auto-fix found no stronger score-safe rewrite from the current resume. The score remains ${data.updated_score}/100 until more matching evidence is added manually.`);
+      } else {
+        setAtsStatus(`Auto-fix updated the live resume and kept the ATS score at ${data.updated_score}/100. The score is already near the maximum the current resume can support safely.`);
+      }
+      if (resumeChanged) {
+        setActiveWorkspace("editor");
+      }
+    } catch (error) {
+      setAtsStatus(`Auto-fix failed: ${error.message}`);
+      setStatus(`ATS auto-fix failed: ${error.message}`);
+    } finally {
+      setAtsFixing(false);
+    }
+  };
+
   const loadDemoData = () => {
     setResume(normalizeResumeData(structuredClone(sampleResume)));
+    setAtsOptimization(null);
     setStatus("Demo resume loaded. You can edit it, save it, or export a PDF.");
   };
 
@@ -459,10 +840,27 @@ function App() {
   const openAtsWorkspace = () => setActiveWorkspace("ats");
   const openEditorWorkspace = () => setActiveWorkspace("editor");
 
+  if (authChecking || !authToken || !authUser) {
+    return (
+      <AuthScreen
+        mode={authMode}
+        email={authEmail}
+        password={authPassword}
+        status={authChecking ? "Checking your saved session..." : authStatus}
+        loading={authLoading || authChecking}
+        onModeChange={setAuthMode}
+        onEmailChange={setAuthEmail}
+        onPasswordChange={setAuthPassword}
+        onSubmit={submitAuth}
+      />
+    );
+  }
+
   return (
     <div className="page-shell">
       <AppNavbar
         activeWorkspace={activeWorkspace}
+        authUser={authUser}
         selectedTemplate={selectedTemplate}
         templates={RESUME_TEMPLATES}
         loading={loading}
@@ -472,6 +870,7 @@ function App() {
         onGenerateResume={generateResume}
         onLoadDemoData={loadDemoData}
         onClearSavedDraft={clearSavedDraft}
+        onLogout={logOut}
         onJumpToAts={openAtsWorkspace}
         onJumpToEditor={openEditorWorkspace}
       />
@@ -526,11 +925,20 @@ function App() {
               <Field label="GitHub URL" value={resume.basics.github || ""} onChange={(value) => updateBasics("github", value)} spellCheck={false} />
               <Field label="Website URL" value={resume.basics.website || ""} onChange={(value) => updateBasics("website", value)} spellCheck={false} />
             </div>
-            <TextArea label="Professional Summary" value={resume.basics.summary} onChange={(value) => updateBasics("summary", value)} rows={5} />
-            <p className="field-help">Spelling suggestions appear automatically from your browser while typing.</p>
+            <TextArea label="Professional Summary" value={resume.basics.summary} onChange={(value) => updateBasics("summary", value)} rows={5} enableBold />
+            <p className="field-help">Spelling suggestions appear automatically from your browser while typing. Select text and use `B` or `Ctrl+B` to bold summary and bullet text.</p>
 
             <SectionTitle title="Section Order" />
             <SectionOrderEditor order={normalizeSectionOrder(resume.section_order)} onMove={moveSection} />
+
+            <SectionTitle title="Template Styling" />
+            <TemplateStyleEditor
+              templateName={selectedTemplateMeta.name}
+              color={currentSectionColor}
+              defaultColor={selectedTemplateMeta.defaultSectionColor}
+              onColorChange={(nextColor) => updateTemplateSectionColor(selectedTemplate, nextColor)}
+              onReset={() => resetTemplateSectionColor(selectedTemplate)}
+            />
 
             <SectionTitle title="Skills" actionLabel="Add Skill Group" onAction={() => addItem("skills", emptySkill)} />
             {resume.skills.map((item, index) => (
@@ -616,6 +1024,19 @@ function App() {
             ))}
 
             <SectionTitle title="Certifications" actionLabel="Add Certification" onAction={() => addItem("certifications", emptyCertification)} />
+            {selectedTemplate === "executive-elegance" ? (
+              <label className="checkbox-row template-section-option">
+                <input
+                  type="checkbox"
+                  checked={Boolean(resume.layout_options?.executive_certifications_in_sidebar)}
+                  onChange={(event) => updateLayoutOption("executive_certifications_in_sidebar", event.target.checked)}
+                />
+                <span>
+                  <strong>Move certifications to sidebar</strong>
+                  <small>Unchecked keeps certifications as a normal main section.</small>
+                </span>
+              </label>
+            ) : null}
             {resume.certifications.map((item, index) => (
               <Card key={`certification-${index}`}>
                 <div className="card-head">
@@ -633,22 +1054,25 @@ function App() {
 
             <section className="preview-panel">
               <SectionTitle title="Resume Preview" />
-              <ResumePreviewPanel resume={resume} selectedTemplate={selectedTemplate} />
+              <ResumePreviewPanel resume={resume} selectedTemplate={selectedTemplate} sectionColor={currentSectionColor} />
             </section>
           </main>
         ) : (
           <ATSWorkspaceSection
             atsLoading={atsLoading}
+            atsFixing={atsFixing}
             atsStatus={atsStatus}
             atsTargetTitle={atsTargetTitle}
             atsJobUrl={atsJobUrl}
             atsJobDescription={atsJobDescription}
             atsResult={atsResult}
+            atsOptimization={atsOptimization}
             currentResume={currentResumePayload}
             onTargetTitleChange={setAtsTargetTitle}
             onJobUrlChange={setAtsJobUrl}
             onJobDescriptionChange={setAtsJobDescription}
             onAnalyze={analyzeAts}
+            onAutoFix={autoFixResume}
             onLoadDemoJob={loadDemoJob}
           />
         )}
@@ -657,7 +1081,85 @@ function App() {
   );
 }
 
-function AppNavbar({ activeWorkspace, loading, hasSavedDraft, selectedTemplate, templates, onTemplateChange, onSaveDraft, onGenerateResume, onLoadDemoData, onClearSavedDraft, onJumpToAts, onJumpToEditor }) {
+function AuthScreen({
+  mode,
+  email,
+  password,
+  status,
+  loading,
+  onModeChange,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+}) {
+  const isSignUp = mode === "signup";
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <div className="auth-copy">
+          <p className="eyebrow">ATS Resume Builder</p>
+          <h1>{isSignUp ? "Create your resume account." : "Sign in to your resume workspace."}</h1>
+          <p>
+            Your drafts, PDF exports, and ATS runs are saved in PostgreSQL under your account.
+          </p>
+        </div>
+
+        <form className="auth-card" onSubmit={onSubmit}>
+          <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+            <button
+              type="button"
+              className={mode === "signin" ? "auth-tab is-active" : "auth-tab"}
+              onClick={() => onModeChange("signin")}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              className={mode === "signup" ? "auth-tab is-active" : "auth-tab"}
+              onClick={() => onModeChange("signup")}
+            >
+              Sign Up
+            </button>
+          </div>
+
+          <label className="field">
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              autoComplete="email"
+              spellCheck={false}
+              onChange={(event) => onEmailChange(event.target.value)}
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              minLength={8}
+              maxLength={128}
+              autoComplete={isSignUp ? "new-password" : "current-password"}
+              onChange={(event) => onPasswordChange(event.target.value)}
+              required
+            />
+          </label>
+
+          <Button variant="primary" type="submit" disabled={loading}>
+            {loading ? "Please wait..." : isSignUp ? "Create Account" : "Sign In"}
+          </Button>
+
+          <p className="auth-status">{status}</p>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function AppNavbar({ activeWorkspace, authUser, loading, hasSavedDraft, selectedTemplate, templates, onTemplateChange, onSaveDraft, onGenerateResume, onLoadDemoData, onClearSavedDraft, onLogout, onJumpToAts, onJumpToEditor }) {
   return (
     <nav className="app-navbar">
       <div className="app-navbar-inner">
@@ -688,6 +1190,9 @@ function AppNavbar({ activeWorkspace, loading, hasSavedDraft, selectedTemplate, 
               Clear Saved
             </Button>
           ) : null}
+          <Button variant="nav" className="app-navbar-account" onClick={onLogout} title={`Signed in as ${authUser.email}`}>
+            Logout
+          </Button>
         </div>
       </div>
     </nav>
@@ -696,16 +1201,19 @@ function AppNavbar({ activeWorkspace, loading, hasSavedDraft, selectedTemplate, 
 
 function ATSWorkspaceSection({
   atsLoading,
+  atsFixing,
   atsStatus,
   atsTargetTitle,
   atsJobUrl,
   atsJobDescription,
   atsResult,
+  atsOptimization,
   currentResume,
   onTargetTitleChange,
   onJobUrlChange,
   onJobDescriptionChange,
   onAnalyze,
+  onAutoFix,
   onLoadDemoJob,
 }) {
   const filledSectionCount = [
@@ -779,15 +1287,22 @@ function ATSWorkspaceSection({
               <Button variant="primary" className="ats-action-btn" onClick={onAnalyze} disabled={atsLoading}>
                 {atsLoading ? "Analyzing..." : "Run ATS Test"}
               </Button>
+              <Button variant="secondary" className="ats-action-btn" onClick={onAutoFix} disabled={atsLoading || atsFixing}>
+                {atsFixing ? "Fixing..." : "Auto Fix Score"}
+              </Button>
               <Button variant="secondary" onClick={onLoadDemoJob}>
                 Load Demo Job
               </Button>
             </div>
 
-            <p className="field-help ats-help">
-              If URL scraping fails, the pasted job description becomes the fallback automatically. The score uses weighted rule-based
-              matching, context checks, and ATS formatting heuristics.
-            </p>
+            <div className="ats-helper-stack">
+              <p className="field-help ats-help">
+                If URL scraping fails, the pasted job description is used automatically for scoring.
+              </p>
+              <p className="field-help ats-help">
+                Auto Fix updates the live resume using evidence already present in your current resume.
+              </p>
+            </div>
           </div>
 
           <div className="ats-sidekick-card">
@@ -834,9 +1349,14 @@ function ATSWorkspaceSection({
                   <p className="ats-kicker">Results</p>
                   <h3>ATS insights and recommendation panels</h3>
                 </div>
-                <span className="ats-workbench-pill is-result">Latest analysis loaded</span>
+                <div className="ats-results-actions">
+                  <span className="ats-workbench-pill is-result">Latest analysis loaded</span>
+                  <Button variant="primary" onClick={onAutoFix} disabled={atsLoading || atsFixing}>
+                    {atsFixing ? "Auto-Fixing..." : "Improve Score by Auto-Fixing"}
+                  </Button>
+                </div>
               </div>
-              <ATSResultPanel result={atsResult} />
+              <ATSResultPanel result={atsResult} optimization={atsOptimization} />
             </>
           ) : (
             <div className="ats-empty-state">
@@ -961,6 +1481,29 @@ function SectionOrderEditor({ order, onMove }) {
   );
 }
 
+function TemplateStyleEditor({ templateName, color, defaultColor, onColorChange, onReset }) {
+  return (
+    <div className="editor-card template-style-card">
+      <div className="template-style-copy">
+        <strong>{templateName}</strong>
+        <p>Choose the theme color used for accents, links, rules, and supporting surfaces in the preview and downloaded PDF.</p>
+      </div>
+      <div className="template-style-controls">
+        <label className="field color-field">
+          <span>Theme Color</span>
+          <div className="color-field-row">
+            <input type="color" value={color} className="color-input" onChange={(event) => onColorChange(event.target.value)} aria-label="Section heading color" />
+            <span className="color-value">{color.toUpperCase()}</span>
+          </div>
+        </label>
+        <Button variant="secondary" size="small" onClick={onReset} disabled={color === defaultColor}>
+          Reset Default
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function Card({ children }) {
   return <div className="editor-card">{children}</div>;
 }
@@ -981,19 +1524,65 @@ function Field({ label, value, onChange, disabled = false, spellCheck = true }) 
   );
 }
 
-function TextArea({ label, value, onChange, rows, spellCheck = true }) {
+function BoldButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      className="format-btn"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      aria-label="Bold selected text"
+      title="Bold selected text (Ctrl+B)"
+    >
+      B
+    </button>
+  );
+}
+
+function TextArea({ label, value, onChange, rows, spellCheck = true, enableBold = false }) {
+  const inputRef = useRef(null);
+
   return (
     <label className="field">
-      <span>{label}</span>
+      <div className="field-head">
+        <span>{label}</span>
+        {enableBold ? <BoldButton onClick={() => applyBoldFormatting(inputRef.current, value, onChange)} /> : null}
+      </div>
       <textarea
+        ref={inputRef}
         rows={rows}
         value={value}
         spellCheck={spellCheck}
         autoCorrect={spellCheck ? "on" : "off"}
         autoCapitalize={spellCheck ? "sentences" : "off"}
+        onKeyDown={(event) => handleBoldShortcut(event, inputRef.current, value, onChange)}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
+  );
+}
+
+function BulletEditorRow({ label, index, value, onChange, onRemove }) {
+  const inputRef = useRef(null);
+
+  return (
+    <div className="bullet-input-row">
+      <span className="bullet-input-dot">{"\u2022"}</span>
+      <input
+        ref={inputRef}
+        value={value}
+        spellCheck={true}
+        autoCorrect="on"
+        autoCapitalize="sentences"
+        onKeyDown={(event) => handleBoldShortcut(event, inputRef.current, value, (nextValue) => onChange(index, nextValue))}
+        onChange={(event) => onChange(index, event.target.value)}
+        placeholder="Write one bullet point"
+      />
+      <BoldButton onClick={() => applyBoldFormatting(inputRef.current, value, (nextValue) => onChange(index, nextValue))} />
+      <Button variant="ghost" className="bullet-remove-btn" onClick={() => onRemove(index)}>
+        Remove
+      </Button>
+    </div>
   );
 }
 
@@ -1008,33 +1597,19 @@ function BulletListEditor({ label, items, addLabel, onChange, onAdd, onRemove })
       </div>
       <div className="bullet-editor-list">
         {items.map((item, index) => (
-          <div className="bullet-input-row" key={`${label}-${index}`}>
-            <span className="bullet-input-dot">{"\u2022"}</span>
-            <input
-              value={item}
-              spellCheck={true}
-              autoCorrect="on"
-              autoCapitalize="sentences"
-              onChange={(event) => onChange(index, event.target.value)}
-              placeholder="Write one bullet point"
-            />
-            <Button variant="ghost" className="bullet-remove-btn" onClick={() => onRemove(index)}>
-              Remove
-            </Button>
-          </div>
+          <BulletEditorRow key={`${label}-${index}`} label={label} index={index} value={item} onChange={onChange} onRemove={onRemove} />
         ))}
       </div>
     </div>
   );
 }
 
-function ATSResultPanel({ result }) {
+function ATSResultPanel({ result, optimization }) {
   const groupedMissingKeywords = {
     high: result.missing_keywords.filter((item) => item.importance === "high"),
     medium: result.missing_keywords.filter((item) => item.importance === "medium"),
     low: result.missing_keywords.filter((item) => item.importance === "low"),
   };
-
   return (
     <div className="ats-result">
       <div className="ats-score-hero" style={{ "--score": `${result.overall_score}%` }}>
@@ -1060,6 +1635,54 @@ function ATSResultPanel({ result }) {
           {result.score_cap_reason ? <p className="ats-source-note">{result.score_cap_reason}</p> : null}
         </div>
       </div>
+
+      {optimization ? (
+        <div className="ats-block ats-fix-summary">
+          <div className="ats-block-head">
+            <h4>Auto-Fix Result</h4>
+            <span className={`ats-confidence-pill tone-${optimization.score_delta > 0 ? "strong" : "moderate"}`}>
+              {optimization.score_delta > 0 ? "Score improved" : "Best safe version applied"}
+            </span>
+          </div>
+          <div className="ats-fix-metrics">
+            <div className="ats-fix-metric-card">
+              <span>Before</span>
+              <strong>{optimization.previous_score}/100</strong>
+            </div>
+            <div className="ats-fix-metric-card">
+              <span>After</span>
+              <strong>{optimization.updated_score}/100</strong>
+            </div>
+            <div className="ats-fix-metric-card">
+              <span>Delta</span>
+              <strong>{optimization.score_delta >= 0 ? `+${optimization.score_delta}` : optimization.score_delta}</strong>
+            </div>
+            <div className="ats-fix-metric-card">
+              <span>Mode</span>
+              <strong>Max from resume</strong>
+            </div>
+          </div>
+          <p className="ats-source-note">{optimization.safety_note}</p>
+          {optimization.applied_changes.length ? (
+            <div className="ats-list compact">
+              {optimization.applied_changes.map((item, index) => (
+                <p className="ats-list-item" key={`optimization-change-${index}`}>
+                  <span className="ats-list-bullet">{"\u2022"}</span>
+                  <span>{item}</span>
+                </p>
+              ))}
+            </div>
+          ) : null}
+          <div className="ats-fix-preview">
+            <strong>Live resume updated automatically</strong>
+            <p className="ats-fix-preview-title">{optimization.optimized_resume.basics.headline || "No headline available"}</p>
+            <p>{optimization.optimized_resume.basics.summary}</p>
+          </div>
+          {optimization.remaining_gaps.length ? (
+            <p className="ats-fix-gap-note">Remaining high/medium gaps: {optimization.remaining_gaps.join(", ")}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="ats-block ats-explanation-block">
         <div className="ats-block-head">

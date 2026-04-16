@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Iterable
 
+from .rich_text import strip_rich_text
+
 
 STOPWORDS = {
     "a",
@@ -52,7 +54,7 @@ class KeywordRule:
 KEYWORD_RULES = [
     KeywordRule("Python", ("python", "python3"), "hard_skill"),
     KeywordRule("SQL", ("sql", "structured query language"), "hard_skill"),
-    KeywordRule("PostgreSQL", ("postgresql", "postgres", "postgre sql"), "hard_skill"),
+    KeywordRule("PostgreSQL", ("postgresql", "postgres", "postgre sql", "pgsql"), "hard_skill"),
     KeywordRule("FastAPI", ("fastapi",), "hard_skill"),
     KeywordRule("Django", ("django",), "hard_skill"),
     KeywordRule("Flask", ("flask",), "hard_skill"),
@@ -60,11 +62,11 @@ KEYWORD_RULES = [
     KeywordRule("GraphQL", ("graphql",), "hard_skill"),
     KeywordRule("Docker", ("docker", "containerization"), "hard_skill"),
     KeywordRule("Kubernetes", ("kubernetes", "k8s"), "hard_skill"),
-    KeywordRule("AWS", ("aws", "amazon web services"), "hard_skill"),
+    KeywordRule("AWS", ("aws", "amazon web services", "ec2", "lambda", "s3"), "hard_skill"),
     KeywordRule("GCP", ("gcp", "google cloud platform"), "hard_skill"),
     KeywordRule("Azure", ("azure", "microsoft azure"), "hard_skill"),
     KeywordRule("Git", ("git", "github", "gitlab"), "hard_skill"),
-    KeywordRule("CI/CD", ("ci/cd", "continuous integration", "continuous delivery", "continuous deployment"), "hard_skill"),
+    KeywordRule("CI/CD", ("ci/cd", "cicd", "continuous integration", "continuous delivery", "continuous deployment"), "hard_skill"),
     KeywordRule("Linux", ("linux",), "hard_skill"),
     KeywordRule("Redis", ("redis",), "hard_skill"),
     KeywordRule("Kafka", ("kafka", "apache kafka"), "hard_skill"),
@@ -77,9 +79,9 @@ KEYWORD_RULES = [
     KeywordRule("Scikit-learn", ("scikit-learn", "sklearn"), "hard_skill"),
     KeywordRule("TensorFlow", ("tensorflow",), "hard_skill"),
     KeywordRule("PyTorch", ("pytorch",), "hard_skill"),
-    KeywordRule("Machine Learning", ("machine learning", "ml"), "hard_skill"),
-    KeywordRule("Natural Language Processing", ("natural language processing", "nlp"), "hard_skill"),
-    KeywordRule("Generative AI", ("generative ai", "gen ai", "large language models", "llms", "llm"), "hard_skill"),
+    KeywordRule("Machine Learning", ("machine learning", "machine-learning", "ml", "ai/ml", "ai ml", "aiml"), "hard_skill"),
+    KeywordRule("Natural Language Processing", ("natural language processing", "natural-language processing", "nlp"), "hard_skill"),
+    KeywordRule("Generative AI", ("generative ai", "gen ai", "genai", "gen-ai", "large language model", "large language models", "llms", "llm"), "hard_skill"),
     KeywordRule("Statistics", ("statistics", "statistical analysis", "statistical modeling"), "hard_skill"),
     KeywordRule("A/B Testing", ("a/b testing", "ab testing", "experimentation"), "hard_skill"),
     KeywordRule("Regression Analysis", ("regression analysis", "regression modeling"), "hard_skill"),
@@ -118,7 +120,7 @@ KEYWORD_RULES = [
 ]
 
 def normalize_text(text: str) -> str:
-    lowered = (text or "").lower()
+    lowered = strip_rich_text(text).lower()
     lowered = lowered.replace("&", " and ")
     lowered = re.sub(r"[^a-z0-9+#./\s-]+", " ", lowered)
     lowered = re.sub(r"\s+", " ", lowered)
@@ -151,7 +153,7 @@ def phrase_key(text: str) -> str:
 
 
 def clean_phrase(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip(" -:|,.;")).strip()
+    return re.sub(r"\s+", " ", strip_rich_text(text).strip(" -:|,.;")).strip()
 
 
 def dedupe_preserve_order(items: Iterable[str]) -> list[str]:

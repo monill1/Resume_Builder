@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 
 from backend.app.ats import analyze_resume_against_job, prepare_job_source
+from backend.app.ats_optimizer import optimize_resume_against_job
 from backend.app.ats_normalization import best_match_type
 from backend.app.ats_samples import ATS_SAMPLE_CASES
 from backend.app.models import ATSAnalysisRequest
+from backend.app.sample_data import SAMPLE_RESUME
 
 
 def analyze_case(case_key: str):
@@ -66,6 +68,27 @@ class ATSScoringTests(unittest.TestCase):
         self.assertEqual(best_match_type("Natural Language Processing", "Built NLP pipelines for support routing."), "exact")
         self.assertEqual(best_match_type("PostgreSQL", "Optimized Postgres queries for analytics workloads."), "exact")
 
+    def test_auto_fix_improves_supported_content_without_inventing_missing_skills(self) -> None:
+        source = prepare_job_source(
+            job_url=None,
+            job_description=(
+                "Backend Developer\n"
+                "Required qualifications:\n"
+                "- Experience with Python, FastAPI, REST APIs, Docker, AWS, and SQL.\n"
+                "- Preferred experience with Kubernetes and Redis.\n"
+                "Responsibilities:\n"
+                "- Build backend APIs, partner with stakeholders, and ship reliable features."
+            ),
+            target_title="Backend Developer",
+        )
+
+        optimized = optimize_resume_against_job(SAMPLE_RESUME, source, target_score=85)
+        optimized_skill_items = {item for group in optimized.optimized_resume.skills for item in group.items}
+
+        self.assertGreaterEqual(optimized.updated_score, optimized.previous_score)
+        self.assertIn("Python", optimized.optimized_resume.basics.summary)
+        self.assertNotIn("Kubernetes", optimized_skill_items)
+        self.assertIn("FastAPI", optimized_skill_items)
 
 if __name__ == "__main__":
     unittest.main()

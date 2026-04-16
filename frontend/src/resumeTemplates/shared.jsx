@@ -1,4 +1,5 @@
 import { getSectionTitle } from "./helpers";
+import { renderRichText } from "../richText";
 
 function ContactIcon({ type }) {
   if (type === "phone") return <img src="/contact-logo-clean.png" className="tpl-contact-icon" alt="" aria-hidden="true" />;
@@ -65,7 +66,7 @@ function BulletList({ items, className = "" }) {
       {items.map((item, index) => (
         <p className="tpl-bullet-row" key={`${index}-${item}`}>
           <span className="tpl-bullet-dot">{"\u2022"}</span>
-          <span>{item}</span>
+          <span>{renderRichText(item)}</span>
         </p>
       ))}
     </div>
@@ -73,7 +74,7 @@ function BulletList({ items, className = "" }) {
 }
 
 function SummarySection({ summary }) {
-  return <p className="tpl-summary-text">{summary}</p>;
+  return <p className="tpl-summary-text">{renderRichText(summary)}</p>;
 }
 
 function SkillsSection({ skills }) {
@@ -189,7 +190,7 @@ function CertificationsSection({ items }) {
   );
 }
 
-export function OrderedSections({ data, sectionKeys, variant = "line", className = "" }) {
+export function OrderedSections({ data, sectionKeys, variant = "line", className = "", projectLinkMode }) {
   return sectionKeys.map((sectionKey) => {
     if (sectionKey === "summary" && data.basics.summary) {
       return (
@@ -218,7 +219,7 @@ export function OrderedSections({ data, sectionKeys, variant = "line", className
     if (sectionKey === "projects" && data.projects.length) {
       return (
         <TemplateSection key={sectionKey} title={getSectionTitle(sectionKey)} variant={variant} className={className}>
-          <ProjectsSection items={data.projects} linkMode={variant === "accent" ? "icon" : "text"} />
+          <ProjectsSection items={data.projects} linkMode={projectLinkMode || (variant === "accent" ? "icon" : "text")} />
         </TemplateSection>
       );
     }

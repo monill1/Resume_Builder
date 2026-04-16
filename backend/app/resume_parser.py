@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .ats_config import ATS_SCORING_CONFIG
 from .ats_normalization import dedupe_preserve_order, extract_known_terms
 from .models import ResumePayload
+from .rich_text import strip_rich_text
 
 
 DATE_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
@@ -32,37 +33,54 @@ class ResumeAnalysis:
 
 
 def parse_resume(resume: ResumePayload) -> ResumeAnalysis:
-    summary_text = f"{resume.basics.headline}\n{resume.basics.summary}".strip()
-    skills_lines = [f"{skill.name}: {', '.join(skill.items)}" for skill in resume.skills if skill.name or skill.items]
+    summary_text = f"{strip_rich_text(resume.basics.headline)}\n{strip_rich_text(resume.basics.summary)}".strip()
+    skills_lines = [
+        f"{strip_rich_text(skill.name)}: {', '.join(strip_rich_text(item) for item in skill.items)}"
+        for skill in resume.skills
+        if skill.name or skill.items
+    ]
     experience_lines: list[str] = []
     experience_titles: list[str] = []
     for item in resume.experience:
-        experience_titles.append(item.role)
+        experience_titles.append(strip_rich_text(item.role))
         experience_lines.append(
             " | ".join(
                 part
                 for part in [
-                    item.role,
-                    item.company,
-                    item.location,
-                    f"{item.start_date} - {'Present' if item.current else (item.end_date or '')}".strip(),
+                    strip_rich_text(item.role),
+                    strip_rich_text(item.company),
+                    strip_rich_text(item.location),
+                    strip_rich_text(f"{item.start_date} - {'Present' if item.current else (item.end_date or '')}".strip()),
                 ]
                 if part
             )
         )
-        experience_lines.extend(item.achievements)
+        experience_lines.extend(strip_rich_text(achievement) for achievement in item.achievements)
 
     project_lines: list[str] = []
     for item in resume.projects:
-        project_lines.append(" | ".join(part for part in [item.name, item.year, item.tech_stack, str(item.link or "")] if part))
-        project_lines.extend(item.highlights)
+        project_lines.append(
+            " | ".join(part for part in [strip_rich_text(item.name), item.year, strip_rich_text(item.tech_stack), str(item.link or "")] if part)
+        )
+        project_lines.extend(strip_rich_text(highlight) for highlight in item.highlights)
 
     education_lines = [
-        " | ".join(part for part in [item.institution, item.degree, item.duration, item.location or "", item.score or ""] if part)
+        " | ".join(
+            part
+            for part in [
+                strip_rich_text(item.institution),
+                strip_rich_text(item.degree),
+                strip_rich_text(item.duration),
+                strip_rich_text(item.location or ""),
+                strip_rich_text(item.score or ""),
+            ]
+            if part
+        )
         for item in resume.education
     ]
     certification_lines = [
-        " | ".join(part for part in [item.title, item.issuer, item.year] if part) for item in resume.certifications
+        " | ".join(part for part in [strip_rich_text(item.title), strip_rich_text(item.issuer), strip_rich_text(item.year)] if part)
+        for item in resume.certifications
     ]
 
     section_text = {
@@ -115,11 +133,11 @@ def parse_resume(resume: ResumePayload) -> ResumeAnalysis:
 
 def _build_parse_preview(resume: ResumePayload, section_lines: dict[str, list[str]]) -> str:
     lines = [
-        resume.basics.full_name,
-        resume.basics.headline,
-        f"Email: {resume.basics.email}",
-        f"Phone: {resume.basics.phone}",
-        f"Location: {resume.basics.location}",
+        strip_rich_text(resume.basics.full_name),
+        strip_rich_text(resume.basics.headline),
+        f"Email: {strip_rich_text(resume.basics.email)}",
+        f"Phone: {strip_rich_text(resume.basics.phone)}",
+        f"Location: {strip_rich_text(resume.basics.location)}",
     ]
     for section_key in resume.section_order:
         normalized_lines = section_lines.get(section_key, [])

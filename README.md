@@ -6,6 +6,7 @@ React + FastAPI resume builder that lets users fill structured sections and down
 
 - Frontend: React + Vite
 - Backend: FastAPI
+- Database: PostgreSQL
 - PDF generation: ReportLab
 
 ## Run Backend
@@ -15,10 +16,24 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8005
 ```
 
 Backend URL: `http://127.0.0.1:8005`
+
+The backend reads `DATABASE_URL` from `backend/.env`. For a local PostgreSQL database, use:
+
+```bash
+DATABASE_URL=postgresql://postgres:your_password@localhost:5432/Resume
+```
+
+On startup, the API creates these PostgreSQL tables automatically if they do not exist:
+
+- `resume_drafts`
+- `pdf_exports`
+- `ats_analyses`
+- `ats_optimizations`
 
 ## Run Frontend
 
@@ -34,20 +49,26 @@ Frontend URL: `http://127.0.0.1:5174`
 
 - Frontend: copy `frontend/.env.example` to `.env` and set `VITE_API_BASE_URL`
 - Backend: set `ALLOWED_ORIGINS` to a comma-separated list of frontend URLs that should be allowed to call the API
+- Backend: set `DATABASE_URL` to your PostgreSQL connection string
 
 Example:
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8004
+VITE_API_BASE_URL=http://127.0.0.1:8005
 ALLOWED_ORIGINS=http://localhost:5174,http://127.0.0.1:5174
+DATABASE_URL=postgresql://postgres:your_password@localhost:5432/Resume
 ```
 
 ## API
 
 - `GET /api/health`
 - `GET /api/sample`
+- `GET /api/resume/latest`
+- `POST /api/resume/save`
+- `DELETE /api/resume/saved`
 - `POST /api/resume/generate`
 - `POST /api/ats/analyze`
+- `POST /api/ats/optimize`
 
 ## Make It Usable By Anyone
 
@@ -59,7 +80,7 @@ Run the backend on all interfaces:
 
 ```bash
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8004
+uvicorn app.main:app --host 0.0.0.0 --port 8005
 ```
 
 Run the frontend so other devices can open it:
@@ -72,12 +93,12 @@ npm run dev -- --host 0.0.0.0 --port 5174
 Then open it from another device with your computer's local IP:
 
 - Frontend: `http://YOUR_LOCAL_IP:5174`
-- Backend: `http://YOUR_LOCAL_IP:8004`
+- Backend: `http://YOUR_LOCAL_IP:8005`
 
 Set:
 
 ```bash
-VITE_API_BASE_URL=http://YOUR_LOCAL_IP:8004
+VITE_API_BASE_URL=http://YOUR_LOCAL_IP:8005
 ALLOWED_ORIGINS=http://YOUR_LOCAL_IP:5174
 ```
 

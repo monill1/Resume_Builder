@@ -16,8 +16,13 @@ export const normalizeSectionOrder = (order = []) => {
   return [...uniqueKnown, ...missing];
 };
 
+export const normalizeLayoutOptions = (options = {}) => ({
+  executive_certifications_in_sidebar: Boolean(options?.executive_certifications_in_sidebar),
+});
+
 export const normalizeResumeData = (data) => ({
   ...data,
+  layout_options: normalizeLayoutOptions(data?.layout_options),
   section_order: normalizeSectionOrder(data?.section_order),
 });
 

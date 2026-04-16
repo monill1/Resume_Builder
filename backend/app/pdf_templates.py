@@ -4,6 +4,7 @@ from functools import lru_cache
 from html import escape
 from io import BytesIO
 from pathlib import Path
+import re
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -14,6 +15,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.platypus import (
     BaseDocTemplate,
+    CondPageBreak,
     Frame,
     FrameBreak,
     Flowable,
@@ -30,6 +32,8 @@ from reportlab.platypus import (
 from PIL import Image
 
 from .models import ResumePayload
+from .rich_text import to_reportlab_markup
+from .theme_palette import build_theme_palette
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -60,6 +64,10 @@ def _normalized_section_order(section_order: list[str] | None) -> list[str]:
 
 def _safe_items(items: list[str]) -> list[str]:
     return [item.strip() for item in items if item and item.strip()]
+
+
+def _normalize_inline_paragraph_text(text: str | None) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
 @lru_cache(maxsize=16)
@@ -399,7 +407,7 @@ def _sidebar_skill_rows(resume: ResumePayload, styles) -> list:
     return rows
 
 
-def _sidebar_certification_block(item, width: float, styles) -> KeepTogether:
+def _sidebar_certification_block(item, width: float, styles) -> list:
     head = Table(
         [[Paragraph(escape(item.title), styles["SidebarBodyBold"]), Paragraph(escape(item.year), styles["SidebarMetaRight"])]],
         colWidths=[width * 0.72, width * 0.28],
@@ -419,33 +427,73 @@ def _sidebar_certification_block(item, width: float, styles) -> KeepTogether:
     if item.issuer.strip():
         blocks.append(Paragraph(escape(item.issuer), styles["SidebarMeta"]))
     blocks.append(Spacer(1, 4))
-    return KeepTogether(blocks)
+    return blocks
+
+
+def _section_title_text(section_key: str, resume: ResumePayload, config: dict) -> str:
+    title_overrides = config.get("section_title_overrides", {})
+    if section_key in title_overrides:
+        return title_overrides[section_key]
+    if section_key == "summary":
+        return "Summary"
+    if section_key == "skills":
+        return "Skills"
+    if section_key == "experience":
+        return "Experience"
+    if section_key == "projects":
+        return "Projects"
+    if section_key == "education":
+        return "Education"
+    if section_key == "certifications":
+        return "Certification" if len(resume.certifications) == 1 else "Certifications"
+    return section_key.replace("_", " ").title()
 
 
 def _build_sidebar_story(resume: ResumePayload, sidebar_width: float, styles, config: dict) -> list:
-    story = [
-        Paragraph(escape(resume.basics.full_name), styles["SidebarName"]),
-        Spacer(1, 4),
-    ]
-    if resume.basics.headline.strip():
-        story.extend([Paragraph(escape(resume.basics.headline), styles["SidebarHeadline"]), Spacer(1, 10)])
+    story = []
+    if config.get("sidebar_kicker_text"):
+        story.extend([Paragraph(escape(config["sidebar_kicker_text"]), styles["SidebarKicker"]), Spacer(1, config.get("sidebar_kicker_gap_after", 8))])
 
-    if config.get("sidebar_contact_icons"):
-        story.extend([ContactStackFlowable(resume, sidebar_width, config["accent"]), Spacer(1, 12)])
+    story.extend([Paragraph(escape(resume.basics.full_name), styles["SidebarName"]), Spacer(1, 4)])
+    if resume.basics.headline.strip():
+        story.extend([Paragraph(escape(resume.basics.headline), styles["SidebarHeadline"]), Spacer(1, config.get("sidebar_headline_gap_after", 10))])
     else:
-        story.extend(_contact_stack(resume, config["accent"], styles, "SidebarContact"))
+        story.append(Spacer(1, config.get("sidebar_name_gap_after", 10)))
+
+    if config.get("sidebar_show_divider"):
+        story.extend(
+            [
+                HRFlowable(width="100%", thickness=config.get("sidebar_divider_thickness", 0.75), color=config.get("sidebar_divider_color", LIGHT_RULE)),
+                Spacer(1, config.get("sidebar_divider_gap_after", 10)),
+            ]
+        )
+
+    sidebar_config = {
+        **config,
+        "section_variant": config.get("sidebar_section_variant", "stacked"),
+        "section_title_style": config.get("sidebar_section_title_style", "SidebarTitle"),
+        "uppercase_sections": config.get("sidebar_uppercase_sections", config.get("uppercase_sections", False)),
+        "section_gap_after_header": config.get("sidebar_section_gap_after_header", config.get("section_gap_after_header", 4)),
+        "section_gap_after": config.get("sidebar_section_gap_after", config.get("section_gap_after", 5)),
+    }
+
+    contact_items = [ContactStackFlowable(resume, sidebar_width, config["accent"])] if config.get("sidebar_contact_icons") else _contact_stack(
+        resume, config["accent"], styles, "SidebarContact"
+    )
+    if config.get("sidebar_contact_title"):
+        _append_section(story, config["sidebar_contact_title"], contact_items, sidebar_width, styles, sidebar_config)
+    else:
+        story.extend(contact_items)
         story.append(Spacer(1, 12))
 
     sidebar_keys = [key for key in _normalized_section_order(getattr(resume, "section_order", None)) if key in config.get("sidebar_keys", [])]
-    sidebar_config = {**config, "section_variant": config.get("sidebar_section_variant", "stacked")}
     for section_key in sidebar_keys:
         if section_key == "skills" and resume.skills:
-            _append_section(story, "Skills", _sidebar_skill_rows(resume, styles), sidebar_width, styles, sidebar_config)
+            _append_section(story, _section_title_text(section_key, resume, sidebar_config), _sidebar_skill_rows(resume, styles), sidebar_width, styles, sidebar_config)
         elif section_key == "certifications" and resume.certifications:
-            title = "Certification" if len(resume.certifications) == 1 else "Certifications"
             _append_section(
                 story,
-                title,
+                _section_title_text(section_key, resume, sidebar_config),
                 [_sidebar_certification_block(item, sidebar_width, styles) for item in resume.certifications],
                 sidebar_width,
                 styles,
@@ -560,6 +608,16 @@ def _build_styles(config: dict):
     )
     styles.add(
         ParagraphStyle(
+            name="SidebarKicker",
+            fontName="Helvetica-Bold",
+            fontSize=config.get("sidebar_kicker_size", 9.0),
+            leading=config.get("sidebar_kicker_leading", 10.4),
+            alignment=TA_LEFT,
+            textColor=config.get("sidebar_title_color", accent),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
             name="SidebarName",
             fontName=config.get("sidebar_name_font", config.get("name_font", "Helvetica-Bold")),
             fontSize=config.get("sidebar_name_size", 19),
@@ -596,6 +654,7 @@ def _build_styles(config: dict):
             leading=config.get("sidebar_body_leading", 10.2),
             alignment=TA_LEFT,
             textColor=config.get("sidebar_text", TEXT),
+            spaceAfter=config.get("sidebar_skill_space_after", 0),
         )
     )
     styles.add(
@@ -626,8 +685,8 @@ def _build_styles(config: dict):
         ParagraphStyle(
             name="SidebarTitle",
             fontName="Helvetica-Bold",
-            fontSize=9.2,
-            leading=10.4,
+            fontSize=config.get("sidebar_title_size", 10.2),
+            leading=config.get("sidebar_title_leading", 11.8),
             alignment=TA_LEFT,
             textColor=config.get("sidebar_title_color", accent),
         )
@@ -636,8 +695,10 @@ def _build_styles(config: dict):
 
 
 def _section_header(title: str, width: float, styles, config: dict):
+    title_style = styles[config.get("section_title_style", "SectionTitle")]
+
     if config.get("section_variant") == "pill":
-        table = Table([[Paragraph(escape(title.upper()), styles["SectionTitle"])]], colWidths=[width])
+        table = Table([[Paragraph(escape(title.upper()), title_style)]], colWidths=[width])
         table.setStyle(
             TableStyle(
                 [
@@ -653,9 +714,28 @@ def _section_header(title: str, width: float, styles, config: dict):
 
     if config.get("section_variant") == "stacked":
         label = escape(title.upper() if config.get("uppercase_sections") else title)
+        if title in config.get("section_titles_without_rule", []):
+            table = Table([[Paragraph(label, title_style)]], colWidths=[width])
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ]
+                )
+            )
+            return table
+
         table = Table(
-            [[Paragraph(label, styles["SectionTitle"])], [HRFlowable(width="100%", thickness=0.75, color=config.get("rule_color", LIGHT_RULE))]],
+            [
+                [Paragraph(label, title_style)],
+                [""],
+                [HRFlowable(width="100%", thickness=0.75, color=config.get("rule_color", LIGHT_RULE))],
+            ],
             colWidths=[width],
+            rowHeights=[None, config.get("stacked_rule_gap", 2), None],
         )
         table.setStyle(
             TableStyle(
@@ -671,7 +751,7 @@ def _section_header(title: str, width: float, styles, config: dict):
 
     label = escape(title.upper() if config.get("uppercase_sections") else title)
     table = Table(
-        [[Paragraph(label, styles["SectionTitle"]), HRFlowable(width="100%", thickness=0.75, color=config.get("rule_color", LIGHT_RULE))]],
+        [[Paragraph(label, title_style), HRFlowable(width="100%", thickness=0.75, color=config.get("rule_color", LIGHT_RULE))]],
         colWidths=[config.get("section_label_width", 1.35) * inch, width - (config.get("section_label_width", 1.35) * inch)],
     )
     table.setStyle(
@@ -689,7 +769,14 @@ def _section_header(title: str, width: float, styles, config: dict):
 
 
 def _bullet_rows(items: list[str], styles) -> list:
-    return [Paragraph(escape(item), styles["ResumeBullet"], bulletText="\u2022") for item in _safe_items(items)]
+    return [
+        Paragraph(
+            to_reportlab_markup(item, bold_font_name=styles["ResumeBullet"].fontName),
+            styles["ResumeBullet"],
+            bulletText="\u2022",
+        )
+        for item in _safe_items(items)
+    ]
 
 
 def _skill_rows(resume: ResumePayload, styles) -> list:
@@ -708,7 +795,8 @@ def _skill_rows(resume: ResumePayload, styles) -> list:
     return rows
 
 
-def _experience_block(item, width: float, styles) -> KeepTogether:
+def _experience_block(item, width: float, styles, config: dict | None = None) -> list:
+    config = config or {}
     left = [Paragraph(escape(item.role), styles["ItemRole"])]
     if item.company_link:
         left.append(
@@ -721,9 +809,10 @@ def _experience_block(item, width: float, styles) -> KeepTogether:
         left.append(Paragraph(escape(item.company), styles["ItemCompany"]))
 
     right_parts = [part for part in [item.location, f"{item.start_date} - {'Current' if item.current or not item.end_date else item.end_date}"] if part]
+    meta_ratio = config.get("experience_meta_ratio", 0.34)
     table = Table(
-        [[left, Paragraph(escape(" | ".join(right_parts)), styles["ItemMeta"])]],
-        colWidths=[width * 0.66, width * 0.34],
+        [[left, Paragraph(escape(" | ".join(right_parts)), styles[config.get("experience_meta_style", "ItemMeta")])]],
+        colWidths=[width * (1 - meta_ratio), width * meta_ratio],
     )
     table.setStyle(
         TableStyle(
@@ -736,14 +825,24 @@ def _experience_block(item, width: float, styles) -> KeepTogether:
             ]
         )
     )
-    return KeepTogether([table, Spacer(1, 2), *_bullet_rows(item.achievements, styles), Spacer(1, 5)])
+    highlight_rows = _bullet_rows(item.achievements, styles)
+    intro_blocks = [table, Spacer(1, 2)]
+    if highlight_rows:
+        lead = KeepTogether([*intro_blocks, highlight_rows[0]])
+        return [lead, *highlight_rows[1:], Spacer(1, config.get("entry_space_after", 5))]
+    return [KeepTogether(intro_blocks), Spacer(1, config.get("entry_space_after", 5))]
 
 
-def _project_block(item, width: float, styles, accent: colors.Color, icon_link: bool = False, trailing_space: float = 5) -> list:
-    title_cell = ProjectTitleFlowable(item, width * 0.72, accent) if icon_link else Paragraph(
-        f"<link href='{escape(str(item.link))}'>{escape(item.name)}</link>" if item.link else escape(item.name),
-        styles["ItemRole"],
-    )
+def _project_block(
+    item,
+    width: float,
+    styles,
+    accent: colors.Color,
+    icon_link: bool = False,
+    trailing_space: float = 5,
+    keep_first_bullet_with_intro: bool = True,
+) -> list:
+    title_cell = ProjectTitleFlowable(item, width * 0.72, accent) if icon_link else Paragraph(escape(item.name), styles["ItemRole"])
     table = Table(
         [[title_cell, Paragraph(escape(item.year.strip()), styles["ItemMeta"])]],
         colWidths=[width * 0.72, width * 0.28],
@@ -764,11 +863,20 @@ def _project_block(item, width: float, styles, accent: colors.Color, icon_link: 
         intro_blocks.extend([Paragraph(escape(item.tech_stack.strip()), styles["ItemCompany"]), Spacer(1, 2)])
     else:
         intro_blocks.append(Spacer(1, 2))
+    if item.link and not icon_link:
+        intro_blocks.extend(
+            [
+                Paragraph(f"<link href='{escape(str(item.link))}'>Project Link</link>", styles["ItemCompanyLink"]),
+                Spacer(1, 2),
+            ]
+        )
 
     highlight_rows = _bullet_rows(item.highlights, styles)
     if highlight_rows:
-        lead = KeepTogether([*intro_blocks, highlight_rows[0]])
-        return [lead, *highlight_rows[1:], Spacer(1, trailing_space)]
+        if keep_first_bullet_with_intro:
+            lead = KeepTogether([*intro_blocks, highlight_rows[0]])
+            return [lead, *highlight_rows[1:], Spacer(1, trailing_space)]
+        return [KeepTogether(intro_blocks), *highlight_rows, Spacer(1, trailing_space)]
     return [KeepTogether(intro_blocks), Spacer(1, trailing_space)]
 
 
@@ -819,48 +927,110 @@ def _certification_block(item, width: float, styles) -> KeepTogether:
     return KeepTogether(blocks)
 
 
+def _anchor_blocks(item) -> list:
+    if isinstance(item, (list, tuple)):
+        return list(item)
+    if isinstance(item, KeepTogether):
+        return list(getattr(item, "_content", [item]))
+    return [item]
+
+
 def _append_section(story: list, title: str, items: list, width: float, styles, config: dict) -> None:
     if not items:
         return
+    section_min_space_map = config.get("section_min_space_map", {})
+    min_space = section_min_space_map.get(title)
+    if min_space:
+        story.append(CondPageBreak(min_space))
     header_gap = Spacer(1, config.get("section_gap_after_header", 4))
     section_tail = Spacer(1, config.get("section_gap_after", 5))
-    first_item, remaining_items = items[0], items[1:]
-    story.extend([KeepTogether([_section_header(title, width, styles, config), header_gap, first_item]), *remaining_items, section_tail])
+    header = _section_header(title, width, styles, config)
+    anchor_map = config.get("section_first_anchor_flowables", {})
+    if title in anchor_map:
+        first_item, remaining_items = items[0], items[1:]
+        first_blocks = _anchor_blocks(first_item)
+        first_anchor_count = max(1, anchor_map[title])
+        anchor_blocks = first_blocks[:first_anchor_count]
+        overflow_blocks = first_blocks[first_anchor_count:]
+        story.append(KeepTogether([header, header_gap, *anchor_blocks]))
+        for block in overflow_blocks:
+            story.append(block)
+    else:
+        story.extend([header, header_gap])
+        remaining_items = items
+
+    for item in remaining_items:
+        if isinstance(item, (list, tuple)):
+            story.extend(item)
+        else:
+            story.append(item)
+    story.append(section_tail)
 
 
 def _build_ordered_story(story: list, resume: ResumePayload, width: float, styles, config: dict, section_keys: list[str]) -> None:
     for section_key in section_keys:
         if section_key == "summary" and resume.basics.summary.strip():
-            _append_section(story, "Summary", [Paragraph(escape(resume.basics.summary), styles["Body"])], width, styles, config)
-        elif section_key == "skills" and resume.skills:
-            _append_section(story, "Skills", _skill_rows(resume, styles), width, styles, config)
-        elif section_key == "experience" and resume.experience:
-            _append_section(story, "Experience", [_experience_block(item, width, styles) for item in resume.experience], width, styles, config)
-        elif section_key == "projects" and resume.projects:
             _append_section(
                 story,
-                "Projects",
-                [
-                    flowable
-                    for item in resume.projects
-                    for flowable in _project_block(
-                        item,
-                        width,
-                        styles,
-                        config["accent"],
-                        icon_link=config.get("project_link_icon", False),
-                        trailing_space=config.get("entry_space_after", 5),
-                    )
-                ],
+                _section_title_text(section_key, resume, config),
+                [Paragraph(to_reportlab_markup(_normalize_inline_paragraph_text(resume.basics.summary), bold_font_name=styles["Body"].fontName), styles["Body"])],
+                width,
+                styles,
+                config,
+            )
+        elif section_key == "skills" and resume.skills:
+            _append_section(story, _section_title_text(section_key, resume, config), _skill_rows(resume, styles), width, styles, config)
+        elif section_key == "experience" and resume.experience:
+            _append_section(
+                story,
+                _section_title_text(section_key, resume, config),
+                [_experience_block(item, width, styles, config) for item in resume.experience],
+                width,
+                styles,
+                config,
+            )
+        elif section_key == "projects" and resume.projects:
+            project_blocks = [
+                flowable
+                for item in resume.projects
+                for flowable in _project_block(
+                    item,
+                    width,
+                    styles,
+                    config["accent"],
+                    icon_link=config.get("project_link_icon", False),
+                    trailing_space=config.get("entry_space_after", 5),
+                    keep_first_bullet_with_intro=config.get("project_keep_first_bullet_with_intro", True),
+                )
+            ]
+            if config.get("keep_projects_together"):
+                project_blocks = [KeepTogether(project_blocks)]
+            _append_section(
+                story,
+                _section_title_text(section_key, resume, config),
+                project_blocks,
                 width,
                 styles,
                 config,
             )
         elif section_key == "education" and resume.education:
-            _append_section(story, "Education", [_education_block(item, width, styles) for item in resume.education], width, styles, config)
+            _append_section(
+                story,
+                _section_title_text(section_key, resume, config),
+                [_education_block(item, width, styles) for item in resume.education],
+                width,
+                styles,
+                config,
+            )
         elif section_key == "certifications" and resume.certifications:
-            title = "Certification" if len(resume.certifications) == 1 else "Certifications"
-            _append_section(story, title, [_certification_block(item, width, styles) for item in resume.certifications], width, styles, config)
+            _append_section(
+                story,
+                _section_title_text(section_key, resume, config),
+                [_certification_block(item, width, styles) for item in resume.certifications],
+                width,
+                styles,
+                config,
+            )
 
 
 def _build_single_column_pdf(resume: ResumePayload, config: dict) -> bytes:
@@ -905,10 +1075,10 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     doc = BaseDocTemplate(
         buffer,
         pagesize=letter,
-        leftMargin=0.54 * inch,
-        rightMargin=0.54 * inch,
-        topMargin=0.4 * inch,
-        bottomMargin=0.32 * inch,
+        leftMargin=config.get("left_margin", 0.54) * inch,
+        rightMargin=config.get("right_margin", 0.54) * inch,
+        topMargin=config.get("top_margin", 0.4) * inch,
+        bottomMargin=config.get("bottom_margin", 0.32) * inch,
         title=f"{resume.basics.full_name} Resume",
         author=resume.basics.full_name,
     )
@@ -940,9 +1110,17 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
 
     def draw_sidebar_panel(canvas, _doc):
         if config.get("sidebar_bg"):
+            sidebar_bleed = config.get("sidebar_bleed", 12)
             canvas.saveState()
             canvas.setFillColor(config["sidebar_bg"])
-            canvas.rect(_doc.leftMargin - 12, _doc.bottomMargin - 12, sidebar_width + 24, _doc.height + 24, fill=1, stroke=0)
+            canvas.rect(
+                _doc.leftMargin - sidebar_bleed,
+                _doc.bottomMargin - sidebar_bleed,
+                sidebar_width + sidebar_bleed,
+                _doc.height + (sidebar_bleed * 2),
+                fill=1,
+                stroke=0,
+            )
             canvas.restoreState()
 
     def draw_first_page(canvas, _doc):
@@ -981,20 +1159,22 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     return buffer.getvalue()
 
 
-def build_additional_template_pdf(resume: ResumePayload, template_id: str) -> bytes:
+def build_additional_template_pdf(resume: ResumePayload, template_id: str, section_color: str | None = None) -> bytes:
+    override_palette = build_theme_palette(section_color) if section_color else None
+
     if template_id == "contemporary-accent":
         return _build_single_column_pdf(
             resume,
             {
-                "accent": colors.HexColor("#1E3A8A"),
+                "accent": override_palette["accent"] if override_palette else colors.HexColor("#1E3A8A"),
                 "name_font": "Helvetica-Bold",
                 "name_size": 21,
                 "headline_size": 10.0,
                 "headline_leading": 11.4,
                 "contact_size": 8.7,
-                "section_text": colors.HexColor("#1E3A8A"),
+                "section_text": override_palette["accent_deep"] if override_palette else colors.HexColor("#1E3A8A"),
                 "section_variant": "pill",
-                "pill_bg": colors.HexColor("#EFF6FF"),
+                "pill_bg": override_palette["accent_soft"] if override_palette else colors.HexColor("#EFF6FF"),
                 "top_band": True,
                 "top_band_height": 8,
                 "band_gap_after": 6,
@@ -1021,52 +1201,88 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str) -> by
         )
 
     if template_id == "executive-elegance":
+        executive_sidebar_keys = ["skills"]
+        if getattr(getattr(resume, "layout_options", None), "executive_certifications_in_sidebar", False):
+            executive_sidebar_keys.append("certifications")
+
         return _build_sidebar_pdf(
             resume,
             {
-                "accent": colors.HexColor("#8A6430"),
+                "accent": override_palette["accent_deep"] if override_palette else colors.HexColor("#8A6430"),
                 "name_font": "Times-Bold",
-                "name_size": 22,
-                "name_leading": 24,
-                "headline_size": 9.8,
-                "headline_leading": 12,
-                "section_text": colors.HexColor("#8A6430"),
-                "rule_color": colors.HexColor("#E5DCCD"),
+                "name_size": 21.2,
+                "name_leading": 22.4,
+                "headline_size": 9.65,
+                "headline_leading": 12.4,
+                "section_text": override_palette["accent_deep"] if override_palette else colors.HexColor("#8A6430"),
+                "rule_color": override_palette["accent_line"] if override_palette else colors.HexColor("#E5DCCD"),
                 "body_size": 8.6,
-                "body_leading": 10.95,
-                "item_role_size": 8.95,
-                "item_role_leading": 10.55,
-                "item_company_size": 8.35,
-                "item_company_leading": 10.0,
-                "item_meta_size": 8.05,
+                "body_leading": 11.2,
+                "item_role_size": 8.9,
+                "item_role_leading": 10.4,
+                "item_company_size": 8.2,
+                "item_company_leading": 9.8,
+                "item_meta_size": 7.95,
                 "item_meta_leading": 9.7,
-                "bullet_space_after": 0.65,
-                "left_margin": 0.5,
-                "right_margin": 0.5,
-                "top_margin": 0.28,
-                "bottom_margin": 0.22,
-                "sidebar_width": 2.18,
-                "column_gap": 0.28,
-                "sidebar_bg": colors.HexColor("#F7F2EA"),
+                "bullet_space_after": 0.35,
+                "left_margin": 0.44,
+                "right_margin": 0.44,
+                "top_margin": 0.14,
+                "bottom_margin": 0.1,
+                "sidebar_width": 2.08,
+                "column_gap": 0.22,
+                "sidebar_bg": override_palette["accent_surface_strong"] if override_palette else colors.HexColor("#F7F2EA"),
                 "sidebar_text": colors.HexColor("#334155"),
                 "sidebar_muted": colors.HexColor("#5F6B79"),
-                "sidebar_title_color": colors.HexColor("#8A6430"),
-                "sidebar_contact_size": 8.25,
-                "sidebar_contact_leading": 10.6,
+                "sidebar_title_color": override_palette["accent_deep"] if override_palette else colors.HexColor("#8A6430"),
+                "sidebar_kicker_text": "EXECUTIVE PROFILE",
+                "sidebar_kicker_size": 8.45,
+                "sidebar_kicker_leading": 9.6,
+                "sidebar_kicker_gap_after": 8,
+                "sidebar_headline_gap_after": 10,
+                "sidebar_name_gap_after": 10,
+                "sidebar_show_divider": False,
+                "sidebar_divider_thickness": 0.75,
+                "sidebar_divider_color": override_palette["accent_line"] if override_palette else colors.HexColor("#E5DCCD"),
+                "sidebar_divider_gap_after": 9,
+                "sidebar_contact_size": 7.8,
+                "sidebar_contact_leading": 9.7,
+                "sidebar_body_size": 7.65,
+                "sidebar_body_leading": 9.2,
+                "sidebar_skill_space_after": 3.5,
+                "sidebar_title_size": 9.85,
+                "sidebar_title_leading": 10.9,
                 "section_label_width": 1.55,
                 "section_variant": "stacked",
                 "uppercase_sections": True,
                 "sidebar_section_variant": "stacked",
                 "sidebar_uppercase_sections": True,
-                "header_gap_after": 7,
-                "section_gap_after_header": 2,
-                "section_gap_after": 3,
-                "sidebar_section_gap_after_header": 2,
-                "sidebar_section_gap_after": 4,
-                "entry_space_after": 4,
+                "sidebar_section_title_style": "SidebarTitle",
+                "sidebar_contact_title": "Contact",
+                "section_titles_without_rule": ["Contact"],
+                "header_gap_after": 5,
+                "section_gap_after_header": 1.5,
+                "section_gap_after": 2.4,
+                "sidebar_section_gap_after_header": 1.5,
+                "sidebar_section_gap_after": 10,
+                "stacked_rule_gap": 2.4,
+                "entry_space_after": 1.7,
                 "sidebar_contact_icons": True,
-                "sidebar_keys": ["skills"],
+                "sidebar_keys": executive_sidebar_keys,
+                "experience_meta_ratio": 0.42,
+                "experience_meta_style": "ItemMetaRight",
                 "project_link_icon": True,
+                "project_keep_first_bullet_with_intro": False,
+                "keep_projects_together": False,
+                "section_min_space_map": {
+                    "Projects": 0.42 * inch,
+                    "Education": 0.85 * inch,
+                    "Certifications": 0.85 * inch,
+                },
+                "section_first_anchor_flowables": {
+                    "Projects": 99,
+                },
+                "section_title_overrides": {"summary": "Professional Summary"},
             },
         )
 

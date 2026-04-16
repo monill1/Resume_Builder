@@ -1,6 +1,6 @@
 import { ContactList, OrderedSections, TemplateSection } from "../shared";
-
-const SIDEBAR_KEYS = ["skills"];
+import { getSectionTitle } from "../helpers";
+import { renderRichText } from "../../richText";
 
 function ExecutiveSidebarSkills({ skills }) {
   if (!skills.length) return null;
@@ -20,8 +20,31 @@ function ExecutiveSidebarSkills({ skills }) {
   );
 }
 
+function ExecutiveSidebarCertifications({ certifications }) {
+  if (!certifications.length) return null;
+
+  return (
+    <TemplateSection title={getSectionTitle("certifications", certifications.length)} variant="stacked" className="executive-stacked">
+      <div className="executive-sidebar-list">
+        {certifications.map((item, index) => (
+          <div className="executive-sidebar-item executive-cert-item" key={`${item.title}-${index}`}>
+            <p className="executive-cert-head">
+              <strong>{item.title}</strong>
+              {item.year ? <span>{item.year}</span> : null}
+            </p>
+            {item.issuer ? <p className="executive-sidebar-meta">{item.issuer}</p> : null}
+          </div>
+        ))}
+      </div>
+    </TemplateSection>
+  );
+}
+
 export default function ExecutiveElegance({ data }) {
-  const mainKeys = data.orderedSections.filter((key) => !SIDEBAR_KEYS.includes(key));
+  const certificationInSidebar = Boolean(data.layout_options?.executive_certifications_in_sidebar);
+  const sidebarKeys = certificationInSidebar ? ["skills", "certifications"] : ["skills"];
+  const sidebarSections = data.orderedSections.filter((key) => sidebarKeys.includes(key));
+  const mainKeys = data.orderedSections.filter((key) => !sidebarKeys.includes(key));
 
   return (
     <div className="resume-template executive-elegance">
@@ -33,26 +56,36 @@ export default function ExecutiveElegance({ data }) {
             {data.basics.headline ? <p className="resume-template-headline">{data.basics.headline}</p> : null}
           </div>
 
-          <div className="executive-divider" />
-
           <div className="template-sidebar-block executive-contact-block">
             <h2>Contact</h2>
             <ContactList contacts={data.contacts} icons layout="stack" className="is-executive" separator={false} />
           </div>
 
           <div className="executive-sidebar-sections">
-            <ExecutiveSidebarSkills skills={data.skills} />
+            {sidebarSections.map((sectionKey) => {
+              if (sectionKey === "skills") return <ExecutiveSidebarSkills key={sectionKey} skills={data.skills} />;
+              if (sectionKey === "certifications") {
+                return <ExecutiveSidebarCertifications key={sectionKey} certifications={data.certifications} />;
+              }
+              return null;
+            })}
           </div>
         </aside>
 
         <main className="template-main executive-main">
           {data.basics.summary ? (
             <TemplateSection title="Professional Summary" variant="minimal" className="executive-summary-section">
-              <p className="tpl-summary-text">{data.basics.summary}</p>
+              <p className="tpl-summary-text">{renderRichText(data.basics.summary)}</p>
             </TemplateSection>
           ) : null}
 
-          <OrderedSections data={data} sectionKeys={mainKeys.filter((key) => key !== "summary")} variant="minimal" className="executive-main-section" />
+          <OrderedSections
+            data={data}
+            sectionKeys={mainKeys.filter((key) => key !== "summary")}
+            variant="minimal"
+            className="executive-main-section"
+            projectLinkMode="icon"
+          />
         </main>
       </div>
     </div>

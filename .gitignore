@@ -1,7 +1,10 @@
 .venv/
+.env
+*.env
 __pycache__/
 *.pyc
 Movie_recommender_systems-master.zip
+backend/.env
 backend/.venv/
 backend/__pycache__/
 backend/app/__pycache__/

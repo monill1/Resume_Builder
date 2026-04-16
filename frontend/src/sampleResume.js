@@ -74,5 +74,8 @@ export const sampleResume = {
     { title: "Python and SQL Certification", issuer: "DataCamp / HackerRank / CodeChef", year: "2022" },
     { title: "The Fundamentals of Digital Marketing", issuer: "Google", year: "2024" },
   ],
+  layout_options: {
+    executive_certifications_in_sidebar: false,
+  },
   section_order: ["summary", "skills", "experience", "projects", "education", "certifications"],
 };
