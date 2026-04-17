@@ -120,6 +120,7 @@ class ResumePayload(BaseModel):
 
 
 class ResumeGenerateRequest(BaseModel):
+    profile_id: Optional[int] = Field(default=None, gt=0)
     template_id: TemplateId = "classic-professional"
     section_color: Optional[str] = Field(default=None, max_length=7)
     resume: ResumePayload
@@ -150,7 +151,32 @@ class AuthSessionResponse(BaseModel):
     user: AuthUserResponse
 
 
+class ResumeProfileCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _normalize_name(cls, value: object) -> object:
+        if isinstance(value, str):
+            return " ".join(value.strip().split())
+        return value
+
+
+class ResumeProfileResponse(BaseModel):
+    id: int
+    name: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    latest_saved_at: Optional[str] = None
+    has_saved_draft: bool = False
+
+
+class ResumeProfilesResponse(BaseModel):
+    profiles: List[ResumeProfileResponse] = Field(default_factory=list)
+
+
 class ResumeSaveRequest(BaseModel):
+    profile_id: Optional[int] = Field(default=None, gt=0)
     template_id: TemplateId = "classic-professional"
     section_color: Optional[str] = Field(default=None, max_length=7)
     resume: dict[str, Any]
@@ -160,11 +186,13 @@ class ResumeSaveRequest(BaseModel):
 
 class ResumeSaveResponse(BaseModel):
     id: int
+    profile_id: Optional[int] = None
     saved_at: Optional[str] = None
 
 
 class SavedResumeResponse(BaseModel):
     id: Optional[int] = None
+    profile_id: Optional[int] = None
     template_id: Optional[str] = None
     section_color: Optional[str] = None
     resume: Optional[dict[str, Any]] = None
@@ -180,6 +208,7 @@ class SampleResumeResponse(BaseModel):
 
 
 class ATSAnalysisRequest(BaseModel):
+    profile_id: Optional[int] = Field(default=None, gt=0)
     job_url: Optional[HttpUrl] = None
     job_description: Optional[str] = Field(default=None, min_length=30, max_length=20000)
     target_title: Optional[str] = Field(default=None, max_length=140)

@@ -7,6 +7,8 @@ import { sampleResume } from "./sampleResume";
 import { normalizeLayoutOptions, normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABELS } from "./resumeData";
 
 const RESUME_DRAFT_KEY = "ats-resume-builder-draft";
+const RESUME_PROFILE_DRAFT_PREFIX = "ats-resume-builder-profile-draft:";
+const RESUME_ACTIVE_PROFILE_KEY = "ats-resume-builder-active-profile";
 const RESUME_TEMPLATE_KEY = "ats-resume-builder-template";
 const RESUME_TEMPLATE_COLOR_KEY = "ats-resume-builder-template-section-colors";
 const WORKSPACE_VIEW_KEY = "ats-resume-builder-workspace-view";
@@ -215,6 +217,25 @@ function downloadBlob(blob, filename) {
   }, 1000);
 }
 
+function getProfileDraftKey(profileId) {
+  return profileId ? `${RESUME_PROFILE_DRAFT_PREFIX}${profileId}` : RESUME_DRAFT_KEY;
+}
+
+function getProfileQuery(profileId) {
+  return profileId ? `?profile_id=${encodeURIComponent(profileId)}` : "";
+}
+
+function removeBrowserProfileDrafts() {
+  const keysToRemove = [RESUME_DRAFT_KEY, RESUME_ACTIVE_PROFILE_KEY];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith(RESUME_PROFILE_DRAFT_PREFIX)) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+}
+
 async function readErrorMessage(response, fallbackMessage) {
   const contentType = response.headers.get("Content-Type") || "";
 
@@ -253,6 +274,10 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authStatus, setAuthStatus] = useState("Sign in to save your resume data in PostgreSQL.");
   const [authLoading, setAuthLoading] = useState(false);
+  const [resumeProfiles, setResumeProfiles] = useState([]);
+  const [activeProfileId, setActiveProfileId] = useState(() => window.localStorage.getItem(RESUME_ACTIVE_PROFILE_KEY) || "");
+  const [profileName, setProfileName] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready to build a polished resume and score it against a target job.");
   const [atsTargetTitle, setAtsTargetTitle] = useState("");
@@ -270,6 +295,8 @@ function App() {
     ...headers,
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
   });
+  const activeProfile = resumeProfiles.find((profile) => String(profile.id) === String(activeProfileId)) || null;
+  const activeProfileLabel = activeProfile?.name || "selected profile";
 
   useEffect(() => {
     let active = true;
@@ -310,15 +337,68 @@ function App() {
   }, [authToken]);
 
   useEffect(() => {
+    let active = true;
+
+    async function hydrateProfiles() {
+      if (!authToken) {
+        setResumeProfiles([]);
+        setActiveProfileId("");
+        return;
+      }
+
+      setProfileLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/resume/profiles`, {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          const message = await readErrorMessage(response, "Unable to load resume profiles.");
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        if (!active) return;
+        const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+        setResumeProfiles(profiles);
+
+        const storedProfileId = window.localStorage.getItem(RESUME_ACTIVE_PROFILE_KEY);
+        const preferredProfile = profiles.find((profile) => String(profile.id) === String(activeProfileId || storedProfileId));
+        const nextProfile = preferredProfile || profiles[0] || null;
+        setActiveProfileId(nextProfile ? String(nextProfile.id) : "");
+      } catch (error) {
+        if (active) {
+          setStatus(`Unable to load resume profiles: ${error.message}`);
+        }
+      } finally {
+        if (active) setProfileLoading(false);
+      }
+    }
+
+    hydrateProfiles();
+    return () => {
+      active = false;
+    };
+  }, [authToken]);
+
+  useEffect(() => {
+    if (activeProfileId) {
+      window.localStorage.setItem(RESUME_ACTIVE_PROFILE_KEY, activeProfileId);
+    }
+  }, [activeProfileId]);
+
+  useEffect(() => {
+    let active = true;
+
     async function hydrateFromBackend() {
-      if (!authToken) return;
+      if (!authToken || !activeProfileId) return;
 
       try {
-        const response = await fetch(`${API_BASE_URL}/api/resume/latest`, {
+        const response = await fetch(`${API_BASE_URL}/api/resume/latest${getProfileQuery(activeProfileId)}`, {
           headers: authHeaders(),
         });
         if (response.ok) {
           const data = await response.json();
+          if (!active) return;
           if (data?.resume) {
             setResume(normalizeResumeData(data.resume));
             if (data.template_id) {
@@ -331,11 +411,12 @@ function App() {
               }));
             }
             setHasSavedDraft(true);
-            setStatus("Saved database draft restored. You can continue where you left off.");
+            setStatus(`Saved draft restored for ${activeProfileLabel}.`);
             return;
           }
           setHasSavedDraft(false);
-          setStatus("Signed in. No saved database draft found yet.");
+          setResume(normalizeResumeData(structuredClone(sampleResume)));
+          setStatus(`${activeProfileLabel} has no saved draft yet. Edit the resume and save it to this profile.`);
           return;
         }
         if (response.status === 401) {
@@ -349,12 +430,15 @@ function App() {
       }
 
       try {
-        const savedDraft = window.localStorage.getItem(RESUME_DRAFT_KEY);
-        if (savedDraft) {
-          const parsedDraft = JSON.parse(savedDraft);
+        const savedDraft = window.localStorage.getItem(getProfileDraftKey(activeProfileId));
+        const legacyDraft = window.localStorage.getItem(RESUME_DRAFT_KEY);
+        const draftToRestore = savedDraft || (activeProfile?.name === "Default Profile" ? legacyDraft : null);
+        if (draftToRestore) {
+          const parsedDraft = JSON.parse(draftToRestore);
+          if (!active) return;
           setResume(normalizeResumeData(parsedDraft));
           setHasSavedDraft(true);
-          setStatus("Saved draft restored. You can continue where you left off.");
+          setStatus(`Browser fallback draft restored for ${activeProfileLabel}.`);
           return;
         }
       } catch {
@@ -363,16 +447,22 @@ function App() {
 
       try {
         const response = await fetch(`${API_BASE_URL}/api/sample`);
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (active) setResume(normalizeResumeData(structuredClone(sampleResume)));
+          return;
+        }
         const data = await response.json();
-        if (data?.resume) setResume(normalizeResumeData(data.resume));
+        if (active && data?.resume) setResume(normalizeResumeData(data.resume));
       } catch {
-        // Keep local sample data when backend is offline.
+        if (active) setResume(normalizeResumeData(structuredClone(sampleResume)));
       }
     }
 
     hydrateFromBackend();
-  }, [authToken]);
+    return () => {
+      active = false;
+    };
+  }, [authToken, activeProfileId, activeProfileLabel]);
 
   useEffect(() => {
     window.localStorage.setItem(RESUME_TEMPLATE_KEY, selectedTemplate);
@@ -435,21 +525,24 @@ function App() {
     }
 
     window.localStorage.removeItem(AUTH_TOKEN_KEY);
-    window.localStorage.removeItem(RESUME_DRAFT_KEY);
+    removeBrowserProfileDrafts();
     setAuthToken("");
     setAuthUser(null);
+    setResumeProfiles([]);
+    setActiveProfileId("");
     setHasSavedDraft(false);
     setResume(normalizeResumeData(structuredClone(sampleResume)));
     setAuthStatus("Signed out successfully.");
   };
 
   const saveDraft = async () => {
-    setStatus("Saving resume data to PostgreSQL...");
+    setStatus(`Saving resume data to ${activeProfileLabel}...`);
     try {
       const response = await fetch(`${API_BASE_URL}/api/resume/save`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
+          profile_id: activeProfileId ? Number(activeProfileId) : null,
           template_id: selectedTemplate,
           section_color: currentSectionColor,
           resume,
@@ -462,17 +555,22 @@ function App() {
       }
 
       try {
-        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(resume));
+        window.localStorage.setItem(getProfileDraftKey(activeProfileId), JSON.stringify(resume));
       } catch {
         // Database save succeeded, so browser storage is only a convenience.
       }
       setHasSavedDraft(true);
-      setStatus("Resume data saved to PostgreSQL successfully.");
+      setResumeProfiles((current) =>
+        current.map((profile) =>
+          String(profile.id) === String(activeProfileId) ? { ...profile, has_saved_draft: true, latest_saved_at: new Date().toISOString() } : profile
+        )
+      );
+      setStatus(`Resume data saved to ${activeProfileLabel}.`);
     } catch (error) {
       try {
-        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(resume));
+        window.localStorage.setItem(getProfileDraftKey(activeProfileId), JSON.stringify(resume));
         setHasSavedDraft(true);
-        setStatus(`Database save failed, but a browser fallback draft was saved: ${error.message}`);
+        setStatus(`Database save failed, but a browser fallback draft was saved for ${activeProfileLabel}: ${error.message}`);
       } catch {
         setStatus(`Unable to save the draft: ${error.message}`);
       }
@@ -481,7 +579,7 @@ function App() {
 
   const clearSavedDraft = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/resume/saved`, {
+      const response = await fetch(`${API_BASE_URL}/api/resume/saved${getProfileQuery(activeProfileId)}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -489,17 +587,86 @@ function App() {
         const message = await readErrorMessage(response, "Unable to clear saved database drafts");
         throw new Error(message);
       }
-      window.localStorage.removeItem(RESUME_DRAFT_KEY);
+      window.localStorage.removeItem(getProfileDraftKey(activeProfileId));
       setHasSavedDraft(false);
-      setStatus("Saved database drafts cleared.");
+      setResumeProfiles((current) =>
+        current.map((profile) => (String(profile.id) === String(activeProfileId) ? { ...profile, has_saved_draft: false, latest_saved_at: null } : profile))
+      );
+      setStatus(`Saved drafts cleared for ${activeProfileLabel}.`);
     } catch (error) {
       try {
-        window.localStorage.removeItem(RESUME_DRAFT_KEY);
+        window.localStorage.removeItem(getProfileDraftKey(activeProfileId));
         setHasSavedDraft(false);
       } catch {
         // Keep the database error visible below.
       }
-      setStatus(`Unable to clear saved database drafts: ${error.message}`);
+      setStatus(`Unable to clear saved drafts for ${activeProfileLabel}: ${error.message}`);
+    }
+  };
+
+  const createProfile = async (event) => {
+    event?.preventDefault();
+    const nextProfileName = profileName.trim();
+    if (nextProfileName.length < 2) {
+      setStatus("Profile name must be at least 2 characters.");
+      return;
+    }
+
+    setProfileLoading(true);
+    setStatus(`Creating ${nextProfileName} profile...`);
+    try {
+      const createResponse = await fetch(`${API_BASE_URL}/api/resume/profiles`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ name: nextProfileName }),
+      });
+      if (!createResponse.ok) {
+        const message = await readErrorMessage(createResponse, "Unable to create profile.");
+        throw new Error(message);
+      }
+
+      const createdProfile = await createResponse.json();
+      let saveError = "";
+      try {
+        const saveResponse = await fetch(`${API_BASE_URL}/api/resume/save`, {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            profile_id: createdProfile.id,
+            template_id: selectedTemplate,
+            section_color: currentSectionColor,
+            resume,
+          }),
+        });
+        if (!saveResponse.ok) {
+          saveError = await readErrorMessage(saveResponse, "Profile created, but unable to save current resume data.");
+        }
+      } catch (error) {
+        saveError = error.message;
+      }
+
+      try {
+        window.localStorage.setItem(getProfileDraftKey(createdProfile.id), JSON.stringify(resume));
+      } catch {
+        // The in-memory editor state still switches to the new profile.
+      }
+
+      setResumeProfiles((current) => [
+        { ...createdProfile, has_saved_draft: !saveError, latest_saved_at: saveError ? null : new Date().toISOString() },
+        ...current.filter((profile) => String(profile.id) !== String(createdProfile.id)),
+      ]);
+      setActiveProfileId(String(createdProfile.id));
+      setProfileName("");
+      setHasSavedDraft(true);
+      setStatus(
+        saveError
+          ? `${createdProfile.name} profile created. Database save failed, but a browser fallback draft was saved: ${saveError}`
+          : `${createdProfile.name} profile created and current resume saved into it.`
+      );
+    } catch (error) {
+      setStatus(`Unable to create profile: ${error.message}`);
+    } finally {
+      setProfileLoading(false);
     }
   };
 
@@ -654,6 +821,7 @@ function App() {
       normalizedJobUrl,
       trimmedJobDescription,
       requestBody: {
+        profile_id: activeProfileId ? Number(activeProfileId) : null,
         job_url: normalizedJobUrl || null,
         job_description: trimmedJobDescription || null,
         target_title: trimmedTargetTitle || null,
@@ -675,6 +843,7 @@ function App() {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
+          profile_id: activeProfileId ? Number(activeProfileId) : null,
           template_id: selectedTemplate,
           section_color: currentSectionColor,
           resume: currentResumePayload,
@@ -781,7 +950,7 @@ function App() {
       setAtsOptimization(data);
       setStatus("ATS auto-fix updated the editor data. Review the refreshed resume content and preview.");
       try {
-        window.localStorage.setItem(RESUME_DRAFT_KEY, JSON.stringify(normalizedOptimizedResume));
+        window.localStorage.setItem(getProfileDraftKey(activeProfileId), JSON.stringify(normalizedOptimizedResume));
         setHasSavedDraft(true);
       } catch {
         // Ignore local save failures and keep the in-memory update.
@@ -791,6 +960,7 @@ function App() {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
+            profile_id: activeProfileId ? Number(activeProfileId) : null,
             template_id: selectedTemplate,
             section_color: currentSectionColor,
             resume: normalizedOptimizedResume,
@@ -821,7 +991,7 @@ function App() {
   const loadDemoData = () => {
     setResume(normalizeResumeData(structuredClone(sampleResume)));
     setAtsOptimization(null);
-    setStatus("Demo resume loaded. You can edit it, save it, or export a PDF.");
+    setStatus(`Demo resume loaded into ${activeProfileLabel}. Save it to keep it in this profile.`);
   };
 
   const loadDemoJob = () => {
@@ -863,9 +1033,16 @@ function App() {
         authUser={authUser}
         selectedTemplate={selectedTemplate}
         templates={RESUME_TEMPLATES}
+        resumeProfiles={resumeProfiles}
+        activeProfileId={activeProfileId}
+        profileName={profileName}
+        profileLoading={profileLoading}
         loading={loading}
         hasSavedDraft={hasSavedDraft}
         onTemplateChange={handleTemplateChange}
+        onProfileChange={setActiveProfileId}
+        onProfileNameChange={setProfileName}
+        onCreateProfile={createProfile}
         onSaveDraft={saveDraft}
         onGenerateResume={generateResume}
         onLoadDemoData={loadDemoData}
@@ -1159,7 +1336,29 @@ function AuthScreen({
   );
 }
 
-function AppNavbar({ activeWorkspace, authUser, loading, hasSavedDraft, selectedTemplate, templates, onTemplateChange, onSaveDraft, onGenerateResume, onLoadDemoData, onClearSavedDraft, onLogout, onJumpToAts, onJumpToEditor }) {
+function AppNavbar({
+  activeWorkspace,
+  authUser,
+  loading,
+  hasSavedDraft,
+  selectedTemplate,
+  templates,
+  resumeProfiles,
+  activeProfileId,
+  profileName,
+  profileLoading,
+  onTemplateChange,
+  onProfileChange,
+  onProfileNameChange,
+  onCreateProfile,
+  onSaveDraft,
+  onGenerateResume,
+  onLoadDemoData,
+  onClearSavedDraft,
+  onLogout,
+  onJumpToAts,
+  onJumpToEditor,
+}) {
   return (
     <nav className="app-navbar">
       <div className="app-navbar-inner">
@@ -1175,21 +1374,25 @@ function AppNavbar({ activeWorkspace, authUser, loading, hasSavedDraft, selected
           <Button variant="nav" className={activeWorkspace === "ats" ? "nav-pill-active" : ""} onClick={onJumpToAts}>
             ATS Test
           </Button>
+          <ProfilePicker
+            profiles={resumeProfiles}
+            activeProfileId={activeProfileId}
+            profileName={profileName}
+            profileLoading={profileLoading}
+            onProfileChange={onProfileChange}
+            onProfileNameChange={onProfileNameChange}
+            onCreateProfile={onCreateProfile}
+          />
           <TemplatePicker selectedTemplate={selectedTemplate} templates={templates} onTemplateChange={onTemplateChange} />
-          <Button variant="nav" onClick={onSaveDraft}>
-            Save Data
-          </Button>
+          <SaveActionsMenu
+            hasSavedDraft={hasSavedDraft}
+            onSaveDraft={onSaveDraft}
+            onClearSavedDraft={onClearSavedDraft}
+            onLoadDemoData={onLoadDemoData}
+          />
           <Button variant="nav" onClick={onGenerateResume} disabled={loading}>
             {loading ? "Generating..." : "Download PDF"}
           </Button>
-          <Button variant="nav" onClick={onLoadDemoData}>
-            Load Demo Data
-          </Button>
-          {hasSavedDraft ? (
-            <Button variant="nav" onClick={onClearSavedDraft}>
-              Clear Saved
-            </Button>
-          ) : null}
           <Button variant="nav" className="app-navbar-account" onClick={onLogout} title={`Signed in as ${authUser.email}`}>
             Logout
           </Button>
@@ -1368,6 +1571,199 @@ function ATSWorkspaceSection({
         </div>
       </div>
     </section>
+  );
+}
+
+function ProfilePicker({ profiles, activeProfileId, profileName, profileLoading, onProfileChange, onProfileNameChange, onCreateProfile }) {
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createSubmitted, setCreateSubmitted] = useState(false);
+  const pickerRef = useRef(null);
+  const activeProfile = profiles.find((profile) => String(profile.id) === String(activeProfileId)) || profiles[0] || null;
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target)) {
+        setOpen(false);
+        setCreating(false);
+        setCreateSubmitted(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setCreating(false);
+        setCreateSubmitted(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (createSubmitted && !profileLoading && !profileName.trim()) {
+      setOpen(false);
+      setCreating(false);
+      setCreateSubmitted(false);
+    }
+  }, [createSubmitted, profileLoading, profileName]);
+
+  const chooseProfile = (profileId) => {
+    onProfileChange(String(profileId));
+    setOpen(false);
+    setCreating(false);
+    setCreateSubmitted(false);
+  };
+
+  const submitProfile = async (event) => {
+    event.preventDefault();
+    setCreateSubmitted(true);
+    await onCreateProfile(event);
+  };
+
+  return (
+    <div className={`profile-picker ${open ? "is-open" : ""}`} ref={pickerRef}>
+      <span className="profile-picker-label">Profile</span>
+      <button
+        type="button"
+        className="profile-picker-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Select resume profile"
+        disabled={profileLoading}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="profile-picker-value">{activeProfile?.name || "Choose profile"}</span>
+        <span className="profile-picker-icon" aria-hidden="true">
+          <svg viewBox="0 0 12 12" focusable="false">
+            <path d="M2 4.5 6 8l4-3.5" />
+          </svg>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="profile-picker-menu" role="listbox" aria-label="Resume profiles">
+          {profiles.map((profile) => (
+            <button
+              key={profile.id}
+              type="button"
+              role="option"
+              aria-selected={String(profile.id) === String(activeProfileId)}
+              className={`profile-picker-option ${String(profile.id) === String(activeProfileId) ? "is-selected" : ""}`}
+              onClick={() => chooseProfile(profile.id)}
+            >
+              <span>{profile.name}</span>
+              {String(profile.id) === String(activeProfileId) ? <span className="profile-picker-check">Active</span> : null}
+            </button>
+          ))}
+
+          <div className="profile-picker-divider" />
+
+          {creating ? (
+            <form className="profile-create-form" onSubmit={submitProfile}>
+              <input
+                type="text"
+                value={profileName}
+                placeholder="Profile name"
+                maxLength={80}
+                autoFocus
+                onChange={(event) => onProfileNameChange(event.target.value)}
+                disabled={profileLoading}
+              />
+              <Button variant="primary" size="small" type="submit" disabled={profileLoading || profileName.trim().length < 2}>
+                {profileLoading ? "Saving..." : "Save"}
+              </Button>
+            </form>
+          ) : (
+            <button type="button" className="profile-picker-option profile-picker-create" onClick={() => {
+              setCreating(true);
+              setCreateSubmitted(false);
+            }}>
+              <span className="profile-plus" aria-hidden="true">+</span>
+              <span>New profile</span>
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SaveActionsMenu({ hasSavedDraft, onSaveDraft, onClearSavedDraft, onLoadDemoData }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  const runAction = (handler) => {
+    setOpen(false);
+    handler();
+  };
+
+  return (
+    <div className={`save-menu ${open ? "is-open" : ""}`} ref={menuRef}>
+      <button
+        type="button"
+        className="ui-btn ui-btn-nav save-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>Save Data</span>
+        <span className="save-menu-icon" aria-hidden="true">
+          <svg viewBox="0 0 12 12" focusable="false">
+            <path d="M2 4.5 6 8l4-3.5" />
+          </svg>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="save-menu-list" role="menu" aria-label="Save actions">
+          <button type="button" role="menuitem" className="save-menu-option" onClick={() => runAction(onSaveDraft)}>
+            Save Data
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="save-menu-option"
+            onClick={() => runAction(onClearSavedDraft)}
+            disabled={!hasSavedDraft}
+          >
+            Clear Saved
+          </button>
+          <button type="button" role="menuitem" className="save-menu-option" onClick={() => runAction(onLoadDemoData)}>
+            Load Demo Data
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

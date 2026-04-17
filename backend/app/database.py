@@ -83,6 +83,17 @@ def _resume_identity(resume_data: dict[str, Any]) -> tuple[str, str]:
     return str(basics.get("full_name") or "").strip(), str(basics.get("email") or "").strip()
 
 
+def _profile_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "created_at": _iso_or_none(row.get("created_at")),
+        "updated_at": _iso_or_none(row.get("updated_at")),
+        "latest_saved_at": _iso_or_none(row.get("latest_saved_at")),
+        "has_saved_draft": bool(row.get("has_saved_draft")),
+    }
+
+
 def _iso_or_none(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -151,9 +162,22 @@ def init_db() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS resume_profiles (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (user_id, name)
+                );
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS resume_drafts (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
+                    profile_id BIGINT REFERENCES resume_profiles(id) ON DELETE SET NULL,
                     full_name TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
                     template_id TEXT NOT NULL DEFAULT 'classic-professional',
@@ -168,6 +192,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS pdf_exports (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
+                    profile_id BIGINT REFERENCES resume_profiles(id) ON DELETE SET NULL,
                     full_name TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
                     template_id TEXT NOT NULL,
@@ -184,6 +209,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS ats_analyses (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
+                    profile_id BIGINT REFERENCES resume_profiles(id) ON DELETE SET NULL,
                     full_name TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
                     job_url TEXT,
@@ -200,6 +226,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS ats_optimizations (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
+                    profile_id BIGINT REFERENCES resume_profiles(id) ON DELETE SET NULL,
                     full_name TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
                     job_url TEXT,
@@ -216,7 +243,11 @@ def init_db() -> None:
                 cursor.execute(
                     f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE;'
                 )
+                cursor.execute(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS profile_id BIGINT REFERENCES resume_profiles(id) ON DELETE SET NULL;'
+                )
                 cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_user_created ON "{table_name}" (user_id, created_at DESC);')
+                cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_profile_created ON "{table_name}" (profile_id, created_at DESC);')
 
 
 def _hash_token(token: str) -> str:
@@ -318,7 +349,136 @@ def delete_session(token: str) -> bool:
             return bool(cursor.rowcount)
 
 
-def save_resume_draft(resume: Any, template_id: str, section_color: str | None, user_id: int) -> dict[str, Any]:
+def _ensure_default_profile(user_id: int) -> dict[str, Any]:
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, name, created_at, updated_at
+                FROM resume_profiles
+                WHERE user_id = %s
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1;
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                cursor.execute(
+                    """
+                    INSERT INTO resume_profiles (user_id, name)
+                    VALUES (%s, %s)
+                    RETURNING id, name, created_at, updated_at;
+                    """,
+                    (user_id, "Default Profile"),
+                )
+                row = cursor.fetchone()
+
+            cursor.execute("UPDATE resume_drafts SET profile_id = %s WHERE user_id = %s AND profile_id IS NULL;", (row["id"], user_id))
+            cursor.execute("UPDATE pdf_exports SET profile_id = %s WHERE user_id = %s AND profile_id IS NULL;", (row["id"], user_id))
+            cursor.execute("UPDATE ats_analyses SET profile_id = %s WHERE user_id = %s AND profile_id IS NULL;", (row["id"], user_id))
+            cursor.execute("UPDATE ats_optimizations SET profile_id = %s WHERE user_id = %s AND profile_id IS NULL;", (row["id"], user_id))
+
+    return _profile_payload({**row, "latest_saved_at": None, "has_saved_draft": False})
+
+
+def _require_profile(user_id: int, profile_id: int | None) -> dict[str, Any]:
+    if profile_id is None:
+        return _ensure_default_profile(user_id)
+
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, name, created_at, updated_at
+                FROM resume_profiles
+                WHERE user_id = %s AND id = %s;
+                """,
+                (user_id, profile_id),
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise ValueError("Resume profile was not found.")
+
+    return _profile_payload({**row, "latest_saved_at": None, "has_saved_draft": False})
+
+
+def create_resume_profile(user_id: int, name: str) -> dict[str, Any]:
+    normalized_name = " ".join(name.strip().split())
+    if not normalized_name:
+        raise ValueError("Profile name is required.")
+
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM resume_profiles
+                WHERE user_id = %s AND lower(name) = lower(%s);
+                """,
+                (user_id, normalized_name),
+            )
+            if cursor.fetchone():
+                raise ValueError("A profile with this name already exists.")
+
+            cursor.execute(
+                """
+                INSERT INTO resume_profiles (user_id, name)
+                VALUES (%s, %s)
+                RETURNING id, name, created_at, updated_at;
+                """,
+                (user_id, normalized_name),
+            )
+            row = cursor.fetchone()
+
+    return _profile_payload({**row, "latest_saved_at": None, "has_saved_draft": False})
+
+
+def list_resume_profiles(user_id: int) -> list[dict[str, Any]]:
+    _ensure_default_profile(user_id)
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    profile.id,
+                    profile.name,
+                    profile.created_at,
+                    profile.updated_at,
+                    latest.created_at AS latest_saved_at,
+                    latest.id IS NOT NULL AS has_saved_draft
+                FROM resume_profiles AS profile
+                LEFT JOIN LATERAL (
+                    SELECT id, created_at
+                    FROM resume_drafts
+                    WHERE user_id = %s AND profile_id = profile.id
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                ) AS latest ON TRUE
+                WHERE profile.user_id = %s
+                ORDER BY profile.updated_at DESC, profile.id DESC;
+                """,
+                (user_id, user_id),
+            )
+            rows = cursor.fetchall()
+
+    return [_profile_payload(row) for row in rows]
+
+
+def save_resume_draft(
+    resume: Any,
+    template_id: str,
+    section_color: str | None,
+    user_id: int,
+    profile_id: int | None = None,
+) -> dict[str, Any]:
+    profile = _require_profile(user_id, profile_id)
     resume_data = _json_ready(resume)
     full_name, email = _resume_identity(resume_data)
     _, dict_row, _ = _import_psycopg()
@@ -327,30 +487,35 @@ def save_resume_draft(resume: Any, template_id: str, section_color: str | None, 
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO resume_drafts (user_id, full_name, email, template_id, section_color, resume_data)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO resume_drafts (user_id, profile_id, full_name, email, template_id, section_color, resume_data)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at;
                 """,
-                (user_id, full_name, email, template_id, section_color, _as_jsonb(resume_data)),
+                (user_id, profile["id"], full_name, email, template_id, section_color, _as_jsonb(resume_data)),
             )
             row = cursor.fetchone()
+            cursor.execute(
+                "UPDATE resume_profiles SET updated_at = NOW() WHERE user_id = %s AND id = %s;",
+                (user_id, profile["id"]),
+            )
 
-    return {"id": row["id"], "saved_at": _iso_or_none(row["created_at"])}
+    return {"id": row["id"], "profile_id": profile["id"], "saved_at": _iso_or_none(row["created_at"])}
 
 
-def get_latest_resume_draft(user_id: int) -> dict[str, Any] | None:
+def get_latest_resume_draft(user_id: int, profile_id: int | None = None) -> dict[str, Any] | None:
+    profile = _require_profile(user_id, profile_id)
     _, dict_row, _ = _import_psycopg()
     with _connect(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, template_id, section_color, resume_data, created_at
+                SELECT id, profile_id, template_id, section_color, resume_data, created_at
                 FROM resume_drafts
-                WHERE user_id = %s
+                WHERE user_id = %s AND profile_id = %s
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1;
                 """,
-                (user_id,),
+                (user_id, profile["id"]),
             )
             row = cursor.fetchone()
 
@@ -359,6 +524,7 @@ def get_latest_resume_draft(user_id: int) -> dict[str, Any] | None:
 
     return {
         "id": row["id"],
+        "profile_id": row["profile_id"],
         "template_id": row["template_id"],
         "section_color": row["section_color"],
         "resume": row["resume_data"],
@@ -366,10 +532,11 @@ def get_latest_resume_draft(user_id: int) -> dict[str, Any] | None:
     }
 
 
-def clear_resume_drafts(user_id: int) -> int:
+def clear_resume_drafts(user_id: int, profile_id: int | None = None) -> int:
+    profile = _require_profile(user_id, profile_id)
     with _connect() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM resume_drafts WHERE user_id = %s;", (user_id,))
+            cursor.execute("DELETE FROM resume_drafts WHERE user_id = %s AND profile_id = %s;", (user_id, profile["id"]))
             return cursor.rowcount or 0
 
 
@@ -381,7 +548,9 @@ def save_pdf_export(
     filename: str,
     pdf_bytes: bytes,
     user_id: int,
+    profile_id: int | None = None,
 ) -> dict[str, Any]:
+    profile = _require_profile(user_id, profile_id)
     resume_data = _json_ready(resume)
     full_name, email = _resume_identity(resume_data)
     _, dict_row, _ = _import_psycopg()
@@ -391,12 +560,12 @@ def save_pdf_export(
             cursor.execute(
                 """
                 INSERT INTO pdf_exports (
-                    user_id, full_name, email, template_id, section_color, filename, resume_data, pdf_bytes
+                    user_id, profile_id, full_name, email, template_id, section_color, filename, resume_data, pdf_bytes
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at;
                 """,
-                (user_id, full_name, email, template_id, section_color, filename, _as_jsonb(resume_data), pdf_bytes),
+                (user_id, profile["id"], full_name, email, template_id, section_color, filename, _as_jsonb(resume_data), pdf_bytes),
             )
             row = cursor.fetchone()
 
@@ -411,7 +580,9 @@ def save_ats_analysis(
     target_title: str | None,
     job_description: str | None,
     user_id: int,
+    profile_id: int | None = None,
 ) -> dict[str, Any]:
+    profile = _require_profile(user_id, profile_id)
     resume_data = _json_ready(resume)
     analysis_data = _json_ready(analysis)
     full_name, email = _resume_identity(resume_data)
@@ -422,13 +593,14 @@ def save_ats_analysis(
             cursor.execute(
                 """
                 INSERT INTO ats_analyses (
-                    user_id, full_name, email, job_url, target_title, job_description, resume_data, analysis_data
+                    user_id, profile_id, full_name, email, job_url, target_title, job_description, resume_data, analysis_data
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at;
                 """,
                 (
                     user_id,
+                    profile["id"],
                     full_name,
                     email,
                     job_url,
@@ -452,7 +624,9 @@ def save_ats_optimization(
     target_title: str | None,
     job_description: str | None,
     user_id: int,
+    profile_id: int | None = None,
 ) -> dict[str, Any]:
+    profile = _require_profile(user_id, profile_id)
     original_resume_data = _json_ready(original_resume)
     optimized_resume_data = _json_ready(optimized_resume)
     optimization_data = _json_ready(optimization)
@@ -464,14 +638,15 @@ def save_ats_optimization(
             cursor.execute(
                 """
                 INSERT INTO ats_optimizations (
-                    user_id, full_name, email, job_url, target_title, job_description,
+                    user_id, profile_id, full_name, email, job_url, target_title, job_description,
                     original_resume_data, optimized_resume_data, optimization_data
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at;
                 """,
                 (
                     user_id,
+                    profile["id"],
                     full_name,
                     email,
                     job_url,

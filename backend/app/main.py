@@ -13,12 +13,14 @@ from .database import (
     DatabaseUnavailableError,
     authenticate_user,
     clear_resume_drafts,
+    create_resume_profile,
     create_session,
     create_user,
     delete_session,
     get_latest_resume_draft,
     get_user_by_session_token,
     init_db,
+    list_resume_profiles,
     save_ats_analysis,
     save_ats_optimization,
     save_pdf_export,
@@ -32,6 +34,9 @@ from .models import (
     AuthCredentials,
     AuthSessionResponse,
     AuthUserResponse,
+    ResumeProfileCreateRequest,
+    ResumeProfileResponse,
+    ResumeProfilesResponse,
     ResumeClearResponse,
     ResumeGenerateRequest,
     ResumeSaveRequest,
@@ -162,10 +167,40 @@ def log_out(authorization: str | None = Header(default=None)) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/resume/latest", response_model=SavedResumeResponse)
-def get_latest_saved_resume(current_user: dict[str, object] = Depends(get_current_user)) -> SavedResumeResponse:
+@app.get("/api/resume/profiles", response_model=ResumeProfilesResponse)
+def get_resume_profiles(current_user: dict[str, object] = Depends(get_current_user)) -> ResumeProfilesResponse:
     try:
-        latest = get_latest_resume_draft(int(current_user["id"]))
+        profiles = list_resume_profiles(int(current_user["id"]))
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    return ResumeProfilesResponse(profiles=[ResumeProfileResponse(**profile) for profile in profiles])
+
+
+@app.post("/api/resume/profiles", response_model=ResumeProfileResponse)
+def create_profile(
+    payload: ResumeProfileCreateRequest,
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> ResumeProfileResponse:
+    try:
+        profile = create_resume_profile(int(current_user["id"]), payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    return ResumeProfileResponse(**profile)
+
+
+@app.get("/api/resume/latest", response_model=SavedResumeResponse)
+def get_latest_saved_resume(
+    profile_id: int | None = None,
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> SavedResumeResponse:
+    try:
+        latest = get_latest_resume_draft(int(current_user["id"]), profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 
@@ -175,7 +210,15 @@ def get_latest_saved_resume(current_user: dict[str, object] = Depends(get_curren
 @app.post("/api/resume/save", response_model=ResumeSaveResponse)
 def save_resume(payload: ResumeSaveRequest, current_user: dict[str, object] = Depends(get_current_user)) -> ResumeSaveResponse:
     try:
-        saved = save_resume_draft(payload.resume, payload.template_id, payload.section_color, int(current_user["id"]))
+        saved = save_resume_draft(
+            payload.resume,
+            payload.template_id,
+            payload.section_color,
+            int(current_user["id"]),
+            payload.profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 
@@ -183,9 +226,14 @@ def save_resume(payload: ResumeSaveRequest, current_user: dict[str, object] = De
 
 
 @app.delete("/api/resume/saved", response_model=ResumeClearResponse)
-def clear_saved_resumes(current_user: dict[str, object] = Depends(get_current_user)) -> ResumeClearResponse:
+def clear_saved_resumes(
+    profile_id: int | None = None,
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> ResumeClearResponse:
     try:
-        deleted_count = clear_resume_drafts(int(current_user["id"]))
+        deleted_count = clear_resume_drafts(int(current_user["id"]), profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 
@@ -204,8 +252,17 @@ def generate_resume(payload: ResumeGenerateRequest, current_user: dict[str, obje
             filename=filename,
             pdf_bytes=pdf_bytes,
             user_id=int(current_user["id"]),
+            profile_id=payload.profile_id,
         )
-        save_resume_draft(payload.resume, payload.template_id, payload.section_color, int(current_user["id"]))
+        save_resume_draft(
+            payload.resume,
+            payload.template_id,
+            payload.section_color,
+            int(current_user["id"]),
+            payload.profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 
@@ -237,7 +294,10 @@ def analyze_ats_match(
             target_title=payload.target_title,
             job_description=payload.job_description,
             user_id=int(current_user["id"]),
+            profile_id=payload.profile_id,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 
@@ -268,7 +328,10 @@ def optimize_ats_resume(
             target_title=payload.target_title,
             job_description=payload.job_description,
             user_id=int(current_user["id"]),
+            profile_id=payload.profile_id,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
 

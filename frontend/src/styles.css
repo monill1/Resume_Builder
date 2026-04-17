@@ -56,7 +56,7 @@ a {
 .page-shell {
   min-height: 100vh;
   background: var(--page-bg);
-  padding: 96px 0 32px;
+  padding: 112px 0 32px;
 }
 
 .page-container {
@@ -204,7 +204,7 @@ a {
 
 .app-navbar-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   align-items: center;
@@ -220,13 +220,213 @@ a {
   font-weight: 800;
 }
 
+.profile-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px 5px 12px;
+  border: 1px solid var(--nav-btn);
+  border-radius: 999px;
+  background: var(--nav-btn);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.profile-picker.is-open {
+  background: #18347d;
+  border-color: #18347d;
+}
+
+.profile-picker-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0.92;
+}
+
+.profile-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 106px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.profile-picker-trigger:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.88);
+  outline-offset: 4px;
+}
+
+.profile-picker-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-picker-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.profile-picker-icon svg {
+  width: 8px;
+  height: 8px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  transition: transform 180ms ease;
+}
+
+.profile-picker.is-open .profile-picker-icon svg {
+  transform: rotate(180deg);
+}
+
+.profile-picker-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 25;
+  width: 100%;
+  min-width: 260px;
+  padding: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9ff 100%);
+  box-shadow: 0 22px 46px rgba(15, 23, 42, 0.18);
+}
+
+.profile-picker-menu::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 26px;
+  width: 14px;
+  height: 14px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-left: 1px solid rgba(17, 24, 39, 0.08);
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.profile-picker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.profile-picker-option:hover,
+.profile-picker-create:hover {
+  background: #eef4ff;
+  color: #1d4ed8;
+  transform: translateX(2px);
+}
+
+.profile-picker-option.is-selected {
+  background: #1e3a8a;
+  color: #ffffff;
+}
+
+.profile-picker-option:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.profile-picker-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.profile-picker-divider {
+  height: 1px;
+  margin: 8px 4px;
+  background: rgba(17, 24, 39, 0.08);
+}
+
+.profile-picker-create {
+  justify-content: flex-start;
+  color: #1e3a8a;
+}
+
+.profile-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #1e3a8a;
+  color: #ffffff;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.profile-create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.profile-create-form input {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.profile-create-form input:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
 .template-picker {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 6px 10px 6px 12px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px 5px 12px;
   border: 1px solid var(--nav-btn);
   border-radius: 999px;
   background: var(--nav-btn);
@@ -250,8 +450,8 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-width: 164px;
+  gap: 6px;
+  min-width: 144px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -279,15 +479,15 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
 }
 
 .template-picker-icon svg {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   stroke: currentColor;
   stroke-width: 1.7;
   stroke-linecap: round;
@@ -369,6 +569,100 @@ a {
   color: inherit;
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.save-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.save-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.save-menu-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.save-menu-icon svg {
+  width: 8px;
+  height: 8px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  transition: transform 180ms ease;
+}
+
+.save-menu.is-open .save-menu-icon svg {
+  transform: rotate(180deg);
+}
+
+.save-menu-list {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 25;
+  min-width: 190px;
+  padding: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9ff 100%);
+  box-shadow: 0 22px 46px rgba(15, 23, 42, 0.18);
+}
+
+.save-menu-list::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 26px;
+  width: 14px;
+  height: 14px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-left: 1px solid rgba(17, 24, 39, 0.08);
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.save-menu-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+
+.save-menu-option:hover:not(:disabled) {
+  background: #eef4ff;
+  color: #1d4ed8;
+  transform: translateX(2px);
+}
+
+.save-menu-option:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.save-menu-option:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
 }
 
 .ui-btn {
@@ -1689,7 +1983,7 @@ a {
   }
 
   .page-shell {
-    padding: 156px 0 32px;
+    padding: 228px 0 32px;
   }
 
   .page-container {
@@ -1711,6 +2005,35 @@ a {
   .app-navbar-actions .ui-btn-nav {
     width: 100%;
     justify-content: center;
+  }
+
+  .save-menu {
+    width: 100%;
+  }
+
+  .save-menu-list {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .profile-picker {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .profile-picker-trigger {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .profile-picker-menu {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .profile-create-form {
+    grid-template-columns: 1fr;
   }
 
   .app-navbar-user {
