@@ -40,6 +40,7 @@ The backend service uses:
 Build Command: pip install -r requirements.txt
 Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 Health Check Path: /api/health
+Python Version: 3.12.8
 ```
 
 Render injects `DATABASE_URL` from the managed PostgreSQL database.
