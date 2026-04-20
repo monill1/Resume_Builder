@@ -20,8 +20,9 @@ Use the root-level `render.yaml` blueprint.
 2. Render will create:
    - `ats-resume-builder-api`
    - `ats-resume-builder-db`
-3. Wait for the backend deploy to finish.
-4. Open the backend URL and verify:
+3. Make sure both resources use the **Free** plan.
+4. Wait for the backend deploy to finish.
+5. Open the backend URL and verify:
 
 ```txt
 https://your-api.onrender.com/api/health
@@ -42,6 +43,8 @@ Health Check Path: /api/health
 ```
 
 Render injects `DATABASE_URL` from the managed PostgreSQL database.
+
+Note: Render's free PostgreSQL databases are good for first-time testing, but they expire after 30 days. For a longer-lived free database, use Supabase Free Postgres and set Render's `DATABASE_URL` to the Supabase connection string instead.
 
 ## 3. Deploy Frontend On Vercel
 

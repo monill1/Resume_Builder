@@ -1,5 +1,6 @@
 databases:
   - name: ats-resume-builder-db
+    plan: free
     databaseName: ats_resume_builder
     user: ats_resume_builder
 
@@ -7,6 +8,7 @@ services:
   - type: web
     name: ats-resume-builder-api
     runtime: python
+    plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
