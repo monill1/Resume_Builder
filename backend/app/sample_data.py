@@ -6,11 +6,11 @@ from .models import ResumePayload
 SAMPLE_RESUME = ResumePayload.model_validate(
     {
         "basics": {
-            "full_name": "Monil Panchal",
+            "full_name": "Rahul Shrma",
             "headline": "AI/ML Engineer | Backend Developer | Data Analyst",
-            "email": "panchalmonil22@gmail.com",
-            "phone": "+91 70165 65034",
-            "location": "Ahmedabad, Gujarat, India",
+            "email": "rahul@example.com",
+            "phone": "1256400236",
+            "location": "Mumbai, Maharashtra",
             "linkedin": "https://www.linkedin.com/in/monil-panchal/",
             "github": "https://github.com/monill1",
             "summary": (
