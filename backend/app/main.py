@@ -71,6 +71,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -242,7 +243,12 @@ def clear_saved_resumes(
 
 @app.post("/api/resume/generate")
 def generate_resume(payload: ResumeGenerateRequest, current_user: dict[str, object] = Depends(get_current_user)) -> Response:
-    pdf_bytes = build_resume_pdf(payload.resume, payload.template_id, payload.section_color)
+    try:
+        pdf_bytes = build_resume_pdf(payload.resume, payload.template_id, payload.section_color)
+    except Exception as exc:
+        logger.exception("PDF generation failed.")
+        raise HTTPException(status_code=500, detail="PDF generation failed.") from exc
+
     filename = f"{payload.resume.basics.full_name.strip().replace(' ', '_')}_resume.pdf"
     try:
         save_pdf_export(

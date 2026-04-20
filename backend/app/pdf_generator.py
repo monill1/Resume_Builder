@@ -44,6 +44,12 @@ for font_name, font_path in FONT_PATHS.items():
     if font_path.exists():
         pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
 
+REGISTERED_FONTS = set(pdfmetrics.getRegisteredFontNames())
+SERIF_FONT = "Georgia" if "Georgia" in REGISTERED_FONTS else "Times-Roman"
+SANS_FONT = "Arial" if "Arial" in REGISTERED_FONTS else "Helvetica"
+SANS_BOLD_FONT = "Arial-Bold" if "Arial-Bold" in REGISTERED_FONTS else "Helvetica-Bold"
+SANS_ITALIC_FONT = "Arial-Italic" if "Arial-Italic" in REGISTERED_FONTS else "Helvetica-Oblique"
+
 
 TEXT = colors.HexColor("#1E1E1E")
 MUTED = colors.HexColor("#555555")
@@ -132,7 +138,7 @@ class ContactLineFlowable(Flowable):
         self.resume = resume
         self.max_width = width
         self.accent_color = accent_color
-        self.font_name = "Arial"
+        self.font_name = SANS_FONT
         self.font_size = 9.0
         self.icon_size = 10.2
         self.gap = 4.2
@@ -257,7 +263,7 @@ class ProjectTitleFlowable(Flowable):
         super().__init__()
         self.item = item
         self.max_width = width
-        self.font_name = "Arial-Bold"
+        self.font_name = SANS_BOLD_FONT
         self.font_size = 8.9
         self.icon_size = 10.4
         self.gap = 6.0
@@ -329,7 +335,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="Name",
-            fontName="Georgia",
+            fontName=SERIF_FONT,
             fontSize=16.5,
             leading=17,
             alignment=TA_CENTER,
@@ -340,7 +346,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="Contact",
-            fontName="Arial",
+            fontName=SANS_FONT,
             fontSize=8.8,
             leading=11.2,
             alignment=TA_CENTER,
@@ -350,7 +356,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="SectionTitle",
-            fontName="Arial-Bold",
+            fontName=SANS_BOLD_FONT,
             fontSize=10.0,
             leading=10.8,
             alignment=TA_LEFT,
@@ -360,7 +366,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="Body",
-            fontName="Arial",
+            fontName=SANS_FONT,
             fontSize=8.35,
             leading=10.35,
             alignment=TA_LEFT,
@@ -379,7 +385,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleLeft",
-            fontName="Arial",
+            fontName=SANS_FONT,
             fontSize=8.7,
             leading=10.3,
             textColor=TEXT,
@@ -389,7 +395,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleCenter",
-            fontName="Arial-Bold",
+            fontName=SANS_BOLD_FONT,
             fontSize=8.7,
             leading=10.3,
             textColor=link_color,
@@ -399,7 +405,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleCenterPlain",
-            fontName="Arial-Bold",
+            fontName=SANS_BOLD_FONT,
             fontSize=8.7,
             leading=10.3,
             textColor=TEXT,
@@ -409,7 +415,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleLeftBold",
-            fontName="Arial-Bold",
+            fontName=SANS_BOLD_FONT,
             fontSize=8.7,
             leading=10.3,
             textColor=TEXT,
@@ -419,7 +425,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleLocation",
-            fontName="Arial-Italic" if "Arial-Italic" in pdfmetrics.getRegisteredFontNames() else "Arial",
+            fontName=SANS_ITALIC_FONT,
             fontSize=8.6,
             leading=10.3,
             textColor=MUTED,
@@ -429,7 +435,7 @@ def _build_styles(theme_palette: dict[str, colors.Color] | None = None):
     styles.add(
         ParagraphStyle(
             name="RoleDate",
-            fontName="Arial",
+            fontName=SANS_FONT,
             fontSize=8.6,
             leading=10.3,
             textColor=TEXT,
@@ -461,7 +467,7 @@ def _section_header(title: str, width: float, styles, rule_color: colors.Color =
 def _skill_block(skills: list[SkillCategory], styles):
     flowables = []
     for item in skills:
-        text = f"<font name='Arial-Bold'>{escape(item.name)}:</font> {escape(', '.join([s for s in item.items if s.strip()]))}"
+        text = f"<font name='{SANS_BOLD_FONT}'>{escape(item.name)}:</font> {escape(', '.join([s for s in item.items if s.strip()]))}"
         flowables.append(Paragraph(text, styles["ResumeBullet"], bulletText="\u2022"))
     return flowables
 
