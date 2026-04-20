@@ -72,6 +72,8 @@ DATABASE_URL=postgresql://postgres:your_password@localhost:5432/Resume
 
 ## Make It Usable By Anyone
 
+For production deployment, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 You have two good options:
 
 ### 1. Share it on the same Wi-Fi or office network
