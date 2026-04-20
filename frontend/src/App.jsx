@@ -187,6 +187,17 @@ function buildFallbackResumeFilename(fullName) {
   return `${normalizedName || "resume"}.pdf`;
 }
 
+function parseCommaSeparatedSkills(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatCommaSeparatedSkills(items) {
+  return (items || []).map((item) => String(item || "").trim()).filter(Boolean).join(", ");
+}
+
 function getDownloadFilename(headers, fallbackFilename) {
   const disposition = headers.get("Content-Disposition") || headers.get("content-disposition") || "";
   const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -739,11 +750,6 @@ function App() {
     setResume((current) => ({ ...current, [section]: current[section].filter((_, itemIndex) => itemIndex !== index) }));
   };
 
-  const handleSkillItemsChange = (index, value) => {
-    const items = value.split(",").map((item) => item.trim());
-    updateArrayItem("skills", index, "items", items);
-  };
-
   const selectedTemplateMeta = getTemplateMeta(selectedTemplate);
   const currentSectionColor = getTemplateSectionColor(selectedTemplate, templateSectionColors);
 
@@ -1125,7 +1131,11 @@ function App() {
                   <Button variant="ghost" onClick={() => removeItem("skills", index)}>Remove</Button>
                 </div>
                 <Field label="Category Name" value={item.name} onChange={(value) => updateArrayItem("skills", index, "name", value)} />
-                <Field label="Comma-separated Skills" value={item.items.join(", ")} onChange={(value) => handleSkillItemsChange(index, value)} />
+                <CommaSeparatedSkillsField
+                  label="Comma-separated Skills"
+                  items={item.items}
+                  onChange={(items) => updateArrayItem("skills", index, "items", items)}
+                />
               </Card>
             ))}
 
@@ -1915,6 +1925,47 @@ function Field({ label, value, onChange, disabled = false, spellCheck = true }) 
         autoCorrect={spellCheck ? "on" : "off"}
         autoCapitalize={spellCheck ? "sentences" : "off"}
         onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function CommaSeparatedSkillsField({ label, items, onChange }) {
+  const [draft, setDraft] = useState(() => formatCommaSeparatedSkills(items));
+  const [isFocused, setIsFocused] = useState(false);
+  const itemsSignature = JSON.stringify(items || []);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setDraft(formatCommaSeparatedSkills(items));
+    }
+  }, [isFocused, itemsSignature, items]);
+
+  const handleChange = (value) => {
+    setDraft(value);
+    onChange(parseCommaSeparatedSkills(value));
+  };
+
+  const normalizeDraft = () => {
+    const normalizedItems = parseCommaSeparatedSkills(draft);
+    setDraft(formatCommaSeparatedSkills(normalizedItems));
+    onChange(normalizedItems);
+  };
+
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        value={draft}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => {
+          setIsFocused(false);
+          normalizeDraft();
+        }}
+        onChange={(event) => handleChange(event.target.value)}
       />
     </label>
   );
