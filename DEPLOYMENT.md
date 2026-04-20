@@ -67,6 +67,8 @@ Add this Vercel environment variable:
 VITE_API_BASE_URL=https://your-api.onrender.com
 ```
 
+The repo also includes `frontend/.env.production` with the current Render backend URL so Vercel production builds have the API URL even if the dashboard variable is missed.
+
 Deploy the frontend.
 
 ## 4. Update Backend CORS
