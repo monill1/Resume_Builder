@@ -1780,9 +1780,30 @@ function AppNavbar({
   onJumpToEditor,
   paymentStatus,
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const paymentLabel = paymentStatus?.exempt
     ? "PDF: Admin"
     : `PDF Credits: ${Number(paymentStatus?.remaining_downloads || 0)}`;
+  const closeMenu = () => setMenuOpen(false);
+  const runAndClose = (handler) => {
+    closeMenu();
+    handler();
+  };
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [menuOpen]);
 
   return (
     <nav className="app-navbar">
@@ -1792,11 +1813,41 @@ function AppNavbar({
           <strong>Save, export, and manage your resume from one toolbar</strong>
         </div>
 
-        <div className="app-navbar-actions">
-          <Button variant="nav" className={activeWorkspace === "editor" ? "nav-pill-active" : ""} onClick={onJumpToEditor}>
+        <button
+          type="button"
+          className={`mobile-menu-toggle ${menuOpen ? "is-open" : ""}`}
+          aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-controls="app-navbar-actions"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+
+        <button
+          type="button"
+          className={`app-navbar-backdrop ${menuOpen ? "is-open" : ""}`}
+          aria-label="Close navigation menu"
+          onClick={closeMenu}
+        />
+
+        <div id="app-navbar-actions" className={`app-navbar-actions ${menuOpen ? "is-open" : ""}`}>
+          <div className="mobile-menu-head">
+            <div>
+              <span className="mobile-menu-kicker">Menu</span>
+              <strong>Resume actions</strong>
+            </div>
+            <button type="button" className="mobile-menu-close" aria-label="Close navigation menu" onClick={closeMenu}>
+              x
+            </button>
+          </div>
+
+          <Button variant="nav" className={activeWorkspace === "editor" ? "nav-pill-active" : ""} onClick={() => runAndClose(onJumpToEditor)}>
             Editor
           </Button>
-          <Button variant="nav" className={activeWorkspace === "ats" ? "nav-pill-active" : ""} onClick={onJumpToAts}>
+          <Button variant="nav" className={activeWorkspace === "ats" ? "nav-pill-active" : ""} onClick={() => runAndClose(onJumpToAts)}>
             ATS Test
           </Button>
           <ProfilePicker
@@ -1814,12 +1865,13 @@ function AppNavbar({
             onSaveDraft={onSaveDraft}
             onClearSavedDraft={onClearSavedDraft}
             onLoadDemoData={onLoadDemoData}
+            onActionComplete={closeMenu}
           />
           <span className="app-navbar-payment">{paymentLabel}</span>
-          <Button variant="nav" onClick={onGenerateResume} disabled={loading}>
+          <Button variant="nav" onClick={() => runAndClose(onGenerateResume)} disabled={loading}>
             {loading ? "Generating..." : "Download PDF"}
           </Button>
-          <Button variant="nav" className="app-navbar-account" onClick={onLogout} title={`Signed in as ${authUser.email}`}>
+          <Button variant="nav" className="app-navbar-account" onClick={() => runAndClose(onLogout)} title={`Signed in as ${authUser.email}`}>
             Logout
           </Button>
         </div>
@@ -2122,7 +2174,7 @@ function ProfilePicker({ profiles, activeProfileId, profileName, profileLoading,
   );
 }
 
-function SaveActionsMenu({ hasSavedDraft, onSaveDraft, onClearSavedDraft, onLoadDemoData }) {
+function SaveActionsMenu({ hasSavedDraft, onSaveDraft, onClearSavedDraft, onLoadDemoData, onActionComplete }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -2151,6 +2203,7 @@ function SaveActionsMenu({ hasSavedDraft, onSaveDraft, onClearSavedDraft, onLoad
   const runAction = (handler) => {
     setOpen(false);
     handler();
+    onActionComplete?.();
   };
 
   return (
