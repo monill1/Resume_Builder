@@ -68,6 +68,29 @@ const RESUME_EXPORT_RULES = [
 ];
 const BOLD_MARKER = "**";
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+const RAZORPAY_CHECKOUT_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
+
+function loadRazorpayCheckout() {
+  if (window.Razorpay) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const existingScript = document.querySelector(`script[src="${RAZORPAY_CHECKOUT_SCRIPT}"]`);
+    if (existingScript) {
+      existingScript.addEventListener("load", resolve, { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Unable to load Razorpay Checkout.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = RAZORPAY_CHECKOUT_SCRIPT;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Unable to load Razorpay Checkout."));
+    document.body.appendChild(script);
+  });
+}
 
 function getValueAtPath(source, path) {
   return path.reduce((current, key) => current?.[key], source);
@@ -301,6 +324,10 @@ function App() {
   const [atsResult, setAtsResult] = useState(null);
   const [atsOptimization, setAtsOptimization] = useState(null);
   const [hasSavedDraft, setHasSavedDraft] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState("");
 
   const hasAnyText = (...values) => values.some((value) => String(value || "").trim());
   const authHeaders = (headers = {}) => ({
@@ -309,6 +336,9 @@ function App() {
   });
   const activeProfile = resumeProfiles.find((profile) => String(profile.id) === String(activeProfileId)) || null;
   const activeProfileLabel = activeProfile?.name || "selected profile";
+  const paymentPlans = Array.isArray(paymentStatus?.plans) ? paymentStatus.plans : [];
+  const remainingDownloads = Number(paymentStatus?.remaining_downloads || 0);
+  const isPaymentExempt = Boolean(paymentStatus?.exempt);
 
   useEffect(() => {
     let active = true;
@@ -397,6 +427,54 @@ function App() {
       window.localStorage.setItem(RESUME_ACTIVE_PROFILE_KEY, activeProfileId);
     }
   }, [activeProfileId]);
+
+  const refreshPaymentStatus = async () => {
+    if (!authToken) {
+      setPaymentStatus(null);
+      return null;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/payments/status`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const message = await readErrorMessage(response, "Unable to load payment status.");
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    setPaymentStatus(data);
+    return data;
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    async function hydratePaymentStatus() {
+      if (!authToken) {
+        setPaymentStatus(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/payments/status`, {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          throw new Error("Unable to load payment status.");
+        }
+        const data = await response.json();
+        if (active) setPaymentStatus(data);
+      } catch {
+        if (active) setPaymentMessage("Payment status could not be loaded.");
+      }
+    }
+
+    hydratePaymentStatus();
+    return () => {
+      active = false;
+    };
+  }, [authToken]);
 
   useEffect(() => {
     let active = true;
@@ -936,13 +1014,108 @@ function App() {
     };
   };
 
-  const generateResume = async () => {
+  const purchasePdfPlan = async (planId) => {
+    setPaymentLoading(true);
+    setPaymentMessage("Opening secure Razorpay Checkout...");
+
+    try {
+      await loadRazorpayCheckout();
+      const orderResponse = await fetch(`${API_BASE_URL}/api/payments/orders`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ plan: planId }),
+      });
+      if (!orderResponse.ok) {
+        const message = await readErrorMessage(orderResponse, "Unable to create payment order.");
+        throw new Error(message);
+      }
+
+      const order = await orderResponse.json();
+      const checkout = new window.Razorpay({
+        key: order.key_id,
+        amount: order.amount_paise,
+        currency: order.currency,
+        name: "ResuME",
+        description: order.description,
+        order_id: order.order_id,
+        prefill: {
+          email: order.customer_email || authUser?.email || "",
+        },
+        theme: {
+          color: "#1e3a8a",
+        },
+        handler: async (paymentResult) => {
+          setPaymentLoading(true);
+          setPaymentMessage("Verifying payment...");
+          try {
+            const verifyResponse = await fetch(`${API_BASE_URL}/api/payments/verify`, {
+              method: "POST",
+              headers: authHeaders({ "Content-Type": "application/json" }),
+              body: JSON.stringify({
+                razorpay_order_id: paymentResult.razorpay_order_id,
+                razorpay_payment_id: paymentResult.razorpay_payment_id,
+                razorpay_signature: paymentResult.razorpay_signature,
+              }),
+            });
+            if (!verifyResponse.ok) {
+              const message = await readErrorMessage(verifyResponse, "Payment verification failed.");
+              throw new Error(message);
+            }
+
+            const verified = await verifyResponse.json();
+            setPaymentStatus(verified.payment);
+            setPaymentModalOpen(false);
+            setPaymentMessage("");
+            setStatus("Payment verified. Download credits are ready.");
+            await generateResume({ skipPaymentPrompt: true });
+          } catch (error) {
+            setPaymentMessage(error.message);
+          } finally {
+            setPaymentLoading(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setPaymentLoading(false);
+            setPaymentMessage("Payment was cancelled.");
+          },
+        },
+      });
+
+      checkout.on("payment.failed", (response) => {
+        setPaymentLoading(false);
+        setPaymentMessage(response?.error?.description || "Payment failed. Please try again.");
+      });
+
+      checkout.open();
+    } catch (error) {
+      setPaymentMessage(error.message);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const generateResume = async ({ skipPaymentPrompt = false } = {}) => {
     setLoading(true);
     setStatus("Generating PDF...");
     try {
       const validationMessage = validateResumeForExport(currentResumePayload);
       if (validationMessage) {
         throw new Error(validationMessage);
+      }
+
+      if (!skipPaymentPrompt) {
+        let latestPaymentStatus = paymentStatus;
+        if (!latestPaymentStatus) {
+          latestPaymentStatus = await refreshPaymentStatus();
+        }
+        const hasDownloadAccess = latestPaymentStatus?.exempt || Number(latestPaymentStatus?.remaining_downloads || 0) > 0;
+        if (!hasDownloadAccess) {
+          setPaymentModalOpen(true);
+          setPaymentMessage("Choose a payment option to unlock PDF downloads.");
+          setStatus("Payment is required before downloading a PDF.");
+          return;
+        }
       }
 
       const response = await fetch(`${API_BASE_URL}/api/resume/generate`, {
@@ -956,6 +1129,12 @@ function App() {
         }),
       });
       if (!response.ok) {
+        if (response.status === 402 && !skipPaymentPrompt) {
+          setPaymentModalOpen(true);
+          setPaymentMessage("Choose a payment option to unlock PDF downloads.");
+          setStatus("Payment is required before downloading a PDF.");
+          return;
+        }
         const message = await readErrorMessage(response, "Unable to generate resume");
         throw new Error(message);
       }
@@ -967,6 +1146,7 @@ function App() {
 
       const filename = getDownloadFilename(response.headers, buildFallbackResumeFilename(resume.basics.full_name));
       downloadBlob(blob, filename);
+      await refreshPaymentStatus();
       setStatus("Resume generated successfully.");
     } catch (error) {
       const isNetworkError = error instanceof TypeError;
@@ -1158,6 +1338,19 @@ function App() {
         onLogout={logOut}
         onJumpToAts={openAtsWorkspace}
         onJumpToEditor={openEditorWorkspace}
+        paymentStatus={paymentStatus}
+      />
+
+      <PaymentModal
+        open={paymentModalOpen}
+        plans={paymentPlans}
+        loading={paymentLoading}
+        message={paymentMessage}
+        remainingDownloads={remainingDownloads}
+        onClose={() => {
+          if (!paymentLoading) setPaymentModalOpen(false);
+        }}
+        onPurchase={purchasePdfPlan}
       />
 
       <div className="page-container">
@@ -1501,6 +1694,68 @@ function AuthScreen({
   );
 }
 
+function formatRupees(amountPaise) {
+  return `Rs. ${Math.round(Number(amountPaise || 0) / 100)}`;
+}
+
+function PaymentModal({
+  open,
+  plans,
+  loading,
+  message,
+  remainingDownloads,
+  onClose,
+  onPurchase,
+}) {
+  if (!open) return null;
+
+  const singlePlan = plans.find((plan) => plan.id === "single_pdf");
+  const monthlyPlan = plans.find((plan) => plan.id === "monthly_pack");
+  const orderedPlans = [singlePlan, monthlyPlan].filter(Boolean);
+
+  return (
+    <div className="payment-modal-backdrop" role="presentation">
+      <section className="payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
+        <div className="payment-modal-head">
+          <div>
+            <p className="eyebrow">Secure Payment</p>
+            <h2 id="payment-modal-title">Unlock PDF download</h2>
+          </div>
+          <button type="button" className="payment-modal-close" onClick={onClose} disabled={loading} aria-label="Close payment dialog">
+            X
+          </button>
+        </div>
+
+        <p className="payment-modal-copy">
+          Pay with UPI QR, credit card, debit card, net banking, or wallet through Razorpay Checkout.
+        </p>
+
+        <div className="payment-plan-grid">
+          {orderedPlans.map((plan) => (
+            <article className="payment-plan" key={plan.id}>
+              <span>{plan.label}</span>
+              <strong>{formatRupees(plan.amount_paise)}</strong>
+              <p>
+                {plan.id === "monthly_pack"
+                  ? `${plan.download_credits} PDF downloads valid for ${plan.valid_days} days.`
+                  : "One PDF download credit."}
+              </p>
+              <Button variant={plan.id === "monthly_pack" ? "primary" : "secondary"} onClick={() => onPurchase(plan.id)} disabled={loading}>
+                {loading ? "Please wait..." : plan.id === "monthly_pack" ? "Buy Monthly Pack" : "Pay and Download"}
+              </Button>
+            </article>
+          ))}
+        </div>
+
+        <p className="payment-status-line">
+          Current PDF credits: <strong>{remainingDownloads}</strong>
+        </p>
+        {message ? <p className="payment-message">{message}</p> : null}
+      </section>
+    </div>
+  );
+}
+
 function AppNavbar({
   activeWorkspace,
   authUser,
@@ -1523,7 +1778,12 @@ function AppNavbar({
   onLogout,
   onJumpToAts,
   onJumpToEditor,
+  paymentStatus,
 }) {
+  const paymentLabel = paymentStatus?.exempt
+    ? "PDF: Admin"
+    : `PDF Credits: ${Number(paymentStatus?.remaining_downloads || 0)}`;
+
   return (
     <nav className="app-navbar">
       <div className="app-navbar-inner">
@@ -1555,6 +1815,7 @@ function AppNavbar({
             onClearSavedDraft={onClearSavedDraft}
             onLoadDemoData={onLoadDemoData}
           />
+          <span className="app-navbar-payment">{paymentLabel}</span>
           <Button variant="nav" onClick={onGenerateResume} disabled={loading}>
             {loading ? "Generating..." : "Download PDF"}
           </Button>

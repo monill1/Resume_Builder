@@ -159,6 +159,100 @@ a {
   line-height: 1.5;
 }
 
+.payment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 39, 0.55);
+}
+
+.payment-modal {
+  width: min(680px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  box-shadow: 0 28px 70px rgba(17, 24, 39, 0.28);
+}
+
+.payment-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.payment-modal-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.6rem;
+}
+
+.payment-modal-close {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.payment-modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.payment-modal-copy,
+.payment-status-line,
+.payment-message {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.payment-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.payment-plan {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.payment-plan span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.payment-plan strong {
+  font-size: 1.8rem;
+}
+
+.payment-plan p {
+  min-height: 48px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.payment-message {
+  min-height: 22px;
+  color: var(--warning-text);
+}
+
 .app-navbar {
   position: fixed;
   top: 0;
@@ -219,6 +313,20 @@ a {
   color: #000000;
   font-size: 0.84rem;
   font-weight: 800;
+}
+
+.app-navbar-payment {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(30, 58, 138, 0.22);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--nav-btn);
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .profile-picker {
@@ -2043,6 +2151,11 @@ a {
     text-align: center;
   }
 
+  .app-navbar-payment {
+    justify-content: center;
+    width: 100%;
+  }
+
   .template-picker {
     width: 100%;
     justify-content: space-between;
@@ -2086,6 +2199,7 @@ a {
   }
 
   .two-col,
+  .payment-plan-grid,
   .ats-breakdown-grid,
   .ats-explanation-grid,
   .ats-double-grid,

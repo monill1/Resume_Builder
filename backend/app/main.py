@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
+import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,14 +15,20 @@ from .database import (
     authenticate_user,
     clear_resume_drafts,
     create_password_reset_otp,
+    create_payment_order,
     create_resume_profile,
     create_session,
     create_signup_otp,
     delete_session,
     get_latest_resume_draft,
+    get_payment_plan,
+    get_payment_status,
     get_user_by_session_token,
+    has_pdf_download_access,
     init_db,
     list_resume_profiles,
+    complete_payment_order,
+    consume_pdf_download_credit,
     reset_password_with_otp,
     save_ats_analysis,
     save_ats_optimization,
@@ -30,6 +37,13 @@ from .database import (
     verify_signup_otp,
 )
 from .email_service import EmailDeliveryError, send_password_reset_otp, send_signup_otp, send_welcome_email
+from .payment_service import (
+    PaymentConfigurationError,
+    PaymentGatewayError,
+    create_razorpay_order,
+    get_razorpay_key_id,
+    verify_razorpay_signature,
+)
 from .models import (
     ATSAnalysisRequest,
     ATSAnalysisResponse,
@@ -42,6 +56,11 @@ from .models import (
     AuthPasswordResetRequest,
     AuthSessionResponse,
     AuthUserResponse,
+    PaymentOrderRequest,
+    PaymentOrderResponse,
+    PaymentStatusResponse,
+    PaymentVerifyRequest,
+    PaymentVerifyResponse,
     ResumeProfileCreateRequest,
     ResumeProfileResponse,
     ResumeProfilesResponse,
@@ -93,6 +112,11 @@ def _raise_email_error(exc: Exception) -> None:
     raise HTTPException(status_code=503, detail="Email could not be sent. Check SMTP configuration and try again.") from exc
 
 
+def _raise_payment_error(exc: Exception) -> None:
+    logger.warning("Payment gateway error: %s", exc)
+    raise HTTPException(status_code=503, detail="Payment gateway is unavailable. Try again in a moment.") from exc
+
+
 def _extract_bearer_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Sign in is required.")
@@ -104,6 +128,11 @@ def _extract_bearer_token(authorization: str | None) -> str:
 
 def _session_payload(user: dict[str, object], token: str) -> AuthSessionResponse:
     return AuthSessionResponse(token=token, user=AuthUserResponse(**user))
+
+
+def _payment_status_payload(user: dict[str, object]) -> PaymentStatusResponse:
+    status = get_payment_status(int(user["id"]), str(user["email"]))
+    return PaymentStatusResponse(**status)
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, object]:
@@ -313,8 +342,116 @@ def clear_saved_resumes(
     return ResumeClearResponse(deleted_count=deleted_count)
 
 
+@app.get("/api/payments/status", response_model=PaymentStatusResponse)
+def get_current_payment_status(current_user: dict[str, object] = Depends(get_current_user)) -> PaymentStatusResponse:
+    try:
+        return _payment_status_payload(current_user)
+    except Exception as exc:
+        _raise_database_error(exc)
+
+
+@app.post("/api/payments/orders", response_model=PaymentOrderResponse)
+def create_payment_checkout_order(
+    payload: PaymentOrderRequest,
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> PaymentOrderResponse:
+    try:
+        plan = get_payment_plan(payload.plan)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    receipt = f"pdf-{current_user['id']}-{secrets.token_hex(8)}"
+    try:
+        razorpay_order = create_razorpay_order(
+            amount_paise=int(plan["amount_paise"]),
+            currency=str(plan["currency"]),
+            receipt=receipt,
+            notes={
+                "user_id": str(current_user["id"]),
+                "email": str(current_user["email"]),
+                "plan": str(payload.plan),
+            },
+        )
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PaymentGatewayError as exc:
+        _raise_payment_error(exc)
+
+    try:
+        create_payment_order(
+            user_id=int(current_user["id"]),
+            plan=payload.plan,
+            razorpay_order_id=str(razorpay_order["id"]),
+            receipt=receipt,
+        )
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    return PaymentOrderResponse(
+        key_id=get_razorpay_key_id(),
+        order_id=str(razorpay_order["id"]),
+        amount_paise=int(plan["amount_paise"]),
+        currency=str(plan["currency"]),
+        plan=payload.plan,
+        label=str(plan["label"]),
+        description=(
+            "Pay Rs. 20 for one PDF download."
+            if payload.plan == "single_pdf"
+            else "Pay Rs. 99 for 10 PDF downloads valid for 30 days."
+        ),
+        customer_email=str(current_user["email"]),
+    )
+
+
+@app.post("/api/payments/verify", response_model=PaymentVerifyResponse)
+def verify_payment(
+    payload: PaymentVerifyRequest,
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> PaymentVerifyResponse:
+    try:
+        is_valid = verify_razorpay_signature(
+            razorpay_order_id=payload.razorpay_order_id,
+            razorpay_payment_id=payload.razorpay_payment_id,
+            razorpay_signature=payload.razorpay_signature,
+        )
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="Payment verification failed.")
+
+    try:
+        status = complete_payment_order(
+            user_id=int(current_user["id"]),
+            razorpay_order_id=payload.razorpay_order_id,
+            razorpay_payment_id=payload.razorpay_payment_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    return PaymentVerifyResponse(
+        status="paid",
+        message="Payment verified. PDF download credits have been added.",
+        payment=PaymentStatusResponse(**status),
+    )
+
+
 @app.post("/api/resume/generate")
 def generate_resume(payload: ResumeGenerateRequest, current_user: dict[str, object] = Depends(get_current_user)) -> Response:
+    user_id = int(current_user["id"])
+    user_email = str(current_user["email"])
+    try:
+        if not has_pdf_download_access(user_id, user_email):
+            raise HTTPException(status_code=402, detail="Payment is required before downloading a PDF.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_database_error(exc)
+
     try:
         pdf_bytes = build_resume_pdf(payload.resume, payload.template_id, payload.section_color)
     except Exception as exc:
@@ -323,20 +460,21 @@ def generate_resume(payload: ResumeGenerateRequest, current_user: dict[str, obje
 
     filename = f"{payload.resume.basics.full_name.strip().replace(' ', '_')}_resume.pdf"
     try:
+        consume_pdf_download_credit(user_id, user_email)
         save_pdf_export(
             resume=payload.resume,
             template_id=payload.template_id,
             section_color=payload.section_color,
             filename=filename,
             pdf_bytes=pdf_bytes,
-            user_id=int(current_user["id"]),
+            user_id=user_id,
             profile_id=payload.profile_id,
         )
         save_resume_draft(
             payload.resume,
             payload.template_id,
             payload.section_color,
-            int(current_user["id"]),
+            user_id,
             payload.profile_id,
         )
     except ValueError as exc:

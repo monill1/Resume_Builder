@@ -32,3 +32,9 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: ADMIN_BYPASS_EMAILS
+        value: panchalmonil44@gamil.com,panchalmonil44@gmail.com

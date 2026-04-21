@@ -106,6 +106,25 @@ OTP_TTL_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 OTP_PURPOSE_SIGNUP = "signup"
 OTP_PURPOSE_PASSWORD_RESET = "password_reset"
+PAYMENT_PLAN_SINGLE_PDF = "single_pdf"
+PAYMENT_PLAN_MONTHLY_PACK = "monthly_pack"
+PAYMENT_PLAN_DETAILS = {
+    PAYMENT_PLAN_SINGLE_PDF: {
+        "amount_paise": 2_000,
+        "currency": "INR",
+        "download_credits": 1,
+        "valid_days": None,
+        "label": "Single PDF Download",
+    },
+    PAYMENT_PLAN_MONTHLY_PACK: {
+        "amount_paise": 9_900,
+        "currency": "INR",
+        "download_credits": 10,
+        "valid_days": 30,
+        "label": "Monthly Download Pack",
+    },
+}
+DEFAULT_ADMIN_BYPASS_EMAILS = "panchalmonil44@gamil.com,panchalmonil44@gmail.com"
 
 
 def _hash_password(password: str) -> str:
@@ -244,6 +263,42 @@ def init_db() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS payment_orders (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+                    plan TEXT NOT NULL,
+                    amount_paise INTEGER NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'INR',
+                    receipt TEXT NOT NULL UNIQUE,
+                    razorpay_order_id TEXT NOT NULL UNIQUE,
+                    razorpay_payment_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'created',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    paid_at TIMESTAMPTZ
+                );
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payment_entitlements (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+                    source_order_id BIGINT REFERENCES payment_orders(id) ON DELETE SET NULL,
+                    total_downloads INTEGER NOT NULL,
+                    remaining_downloads INTEGER NOT NULL,
+                    expires_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_payment_entitlements_user_active
+                ON payment_entitlements (user_id, expires_at, remaining_downloads);
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS ats_analyses (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -298,6 +353,182 @@ def _public_user(row: dict[str, Any]) -> dict[str, Any]:
         "email": row["email"],
         "created_at": _iso_or_none(row.get("created_at")),
     }
+
+
+def is_payment_bypass_email(email: str) -> bool:
+    _load_local_env()
+    configured = os.getenv("ADMIN_BYPASS_EMAILS", DEFAULT_ADMIN_BYPASS_EMAILS)
+    bypass_emails = {_normalize_email(item) for item in configured.split(",") if item.strip()}
+    return _normalize_email(email) in bypass_emails
+
+
+def get_payment_plan(plan: str) -> dict[str, Any]:
+    if plan not in PAYMENT_PLAN_DETAILS:
+        raise ValueError("Select a valid payment plan.")
+    return {"id": plan, **PAYMENT_PLAN_DETAILS[plan]}
+
+
+def get_payment_plans() -> list[dict[str, Any]]:
+    return [get_payment_plan(plan) for plan in (PAYMENT_PLAN_SINGLE_PDF, PAYMENT_PLAN_MONTHLY_PACK)]
+
+
+def create_payment_order(
+    *,
+    user_id: int,
+    plan: str,
+    razorpay_order_id: str,
+    receipt: str,
+) -> dict[str, Any]:
+    plan_details = get_payment_plan(plan)
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO payment_orders (user_id, plan, amount_paise, currency, receipt, razorpay_order_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, user_id, plan, amount_paise, currency, receipt, razorpay_order_id, status, created_at, paid_at;
+                """,
+                (
+                    user_id,
+                    plan,
+                    plan_details["amount_paise"],
+                    plan_details["currency"],
+                    receipt,
+                    razorpay_order_id,
+                ),
+            )
+            row = cursor.fetchone()
+
+    return dict(row)
+
+
+def complete_payment_order(
+    *,
+    user_id: int,
+    razorpay_order_id: str,
+    razorpay_payment_id: str,
+) -> dict[str, Any]:
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, user_id, plan, status, paid_at
+                FROM payment_orders
+                WHERE user_id = %s AND razorpay_order_id = %s
+                FOR UPDATE;
+                """,
+                (user_id, razorpay_order_id),
+            )
+            order = cursor.fetchone()
+            if not order:
+                raise ValueError("Payment order was not found.")
+
+            plan_details = get_payment_plan(order["plan"])
+            if order["status"] != "paid":
+                cursor.execute(
+                    """
+                    UPDATE payment_orders
+                    SET status = 'paid', razorpay_payment_id = %s, paid_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (razorpay_payment_id, order["id"]),
+                )
+
+                if plan_details["valid_days"] is None:
+                    expires_at = None
+                else:
+                    expires_at = datetime.now(timezone.utc) + timedelta(days=int(plan_details["valid_days"]))
+
+                cursor.execute(
+                    """
+                    INSERT INTO payment_entitlements (
+                        user_id, source_order_id, total_downloads, remaining_downloads, expires_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s);
+                    """,
+                    (
+                        user_id,
+                        order["id"],
+                        plan_details["download_credits"],
+                        plan_details["download_credits"],
+                        expires_at,
+                    ),
+                )
+
+    return get_payment_status(user_id)
+
+
+def get_payment_status(user_id: int, email: str | None = None) -> dict[str, Any]:
+    exempt = is_payment_bypass_email(email or "")
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    COALESCE(SUM(remaining_downloads), 0) AS remaining_downloads,
+                    MAX(expires_at) FILTER (WHERE expires_at IS NOT NULL) AS active_pack_expires_at
+                FROM payment_entitlements
+                WHERE user_id = %s
+                    AND remaining_downloads > 0
+                    AND (expires_at IS NULL OR expires_at > NOW());
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone() or {}
+
+    remaining = int(row.get("remaining_downloads") or 0)
+    return {
+        "exempt": exempt,
+        "remaining_downloads": remaining,
+        "active_pack_expires_at": _iso_or_none(row.get("active_pack_expires_at")),
+        "plans": get_payment_plans(),
+    }
+
+
+def has_pdf_download_access(user_id: int, email: str) -> bool:
+    if is_payment_bypass_email(email):
+        return True
+    status = get_payment_status(user_id, email)
+    return int(status["remaining_downloads"]) > 0
+
+
+def consume_pdf_download_credit(user_id: int, email: str) -> dict[str, Any]:
+    if is_payment_bypass_email(email):
+        return get_payment_status(user_id, email)
+
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM payment_entitlements
+                WHERE user_id = %s
+                    AND remaining_downloads > 0
+                    AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY expires_at NULLS LAST, created_at ASC, id ASC
+                LIMIT 1
+                FOR UPDATE;
+                """,
+                (user_id,),
+            )
+            entitlement = cursor.fetchone()
+            if not entitlement:
+                raise ValueError("Payment is required before downloading a PDF.")
+
+            cursor.execute(
+                """
+                UPDATE payment_entitlements
+                SET remaining_downloads = remaining_downloads - 1
+                WHERE id = %s;
+                """,
+                (entitlement["id"],),
+            )
+
+    return get_payment_status(user_id, email)
 
 
 def _consume_otp(email: str, purpose: str, code: str) -> dict[str, Any]:

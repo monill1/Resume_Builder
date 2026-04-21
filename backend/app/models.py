@@ -183,6 +183,49 @@ class AuthSessionResponse(BaseModel):
     user: AuthUserResponse
 
 
+class PaymentPlanResponse(BaseModel):
+    id: Literal["single_pdf", "monthly_pack"]
+    label: str
+    amount_paise: int
+    currency: str
+    download_credits: int
+    valid_days: Optional[int] = None
+
+
+class PaymentStatusResponse(BaseModel):
+    exempt: bool
+    remaining_downloads: int
+    active_pack_expires_at: Optional[str] = None
+    plans: List[PaymentPlanResponse] = Field(default_factory=list)
+
+
+class PaymentOrderRequest(BaseModel):
+    plan: Literal["single_pdf", "monthly_pack"]
+
+
+class PaymentOrderResponse(BaseModel):
+    key_id: str
+    order_id: str
+    amount_paise: int
+    currency: str
+    plan: Literal["single_pdf", "monthly_pack"]
+    label: str
+    description: str
+    customer_email: EmailStr
+
+
+class PaymentVerifyRequest(BaseModel):
+    razorpay_order_id: str = Field(..., min_length=5, max_length=80)
+    razorpay_payment_id: str = Field(..., min_length=5, max_length=80)
+    razorpay_signature: str = Field(..., min_length=20, max_length=200)
+
+
+class PaymentVerifyResponse(BaseModel):
+    status: str
+    message: str
+    payment: PaymentStatusResponse
+
+
 class ResumeProfileCreateRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=80)
 

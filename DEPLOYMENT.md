@@ -87,12 +87,31 @@ If you add a custom domain later, include both origins separated by commas:
 ALLOWED_ORIGINS=https://your-vercel-app.vercel.app,https://yourdomain.com
 ```
 
-## 5. Test Public Usage
+## 5. Configure Email And Razorpay
+
+Add these backend environment variables in Render:
+
+```txt
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_gmail_app_password
+SMTP_FROM=ResuME <your_email@gmail.com>
+RAZORPAY_KEY_ID=rzp_live_your_key_id
+RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+ADMIN_BYPASS_EMAILS=panchalmonil44@gamil.com,panchalmonil44@gmail.com
+```
+
+`ADMIN_BYPASS_EMAILS` is a comma-separated list of account emails that can download PDFs without payment.
+
+## 6. Test Public Usage
 
 Open the Vercel URL in a normal browser window and test:
 
 - Sign up
 - Log in
+- Reset password
+- Buy a PDF download or monthly pack
 - Save a resume
 - Generate a PDF
 - Run ATS analyze/optimize
