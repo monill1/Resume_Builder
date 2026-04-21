@@ -2184,9 +2184,9 @@ a {
     right: 0;
     bottom: 0;
     z-index: 35;
-    width: min(86vw, 340px);
+    width: min(92vw, 360px);
     min-width: 0;
-    padding: 18px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -2269,23 +2269,43 @@ a {
   }
 
   .profile-picker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
     width: 100%;
-    justify-content: space-between;
     min-height: 42px;
+    padding: 8px 10px;
     border-radius: 12px;
+  }
+
+  .profile-picker-label {
+    align-self: center;
+    font-size: 0.68rem;
   }
 
   .profile-picker-trigger {
     min-width: 0;
     width: 100%;
+    justify-content: space-between;
     font-size: 0.9rem;
   }
 
+  .profile-picker-value {
+    text-align: left;
+  }
+
   .profile-picker-menu {
+    grid-column: 1 / -1;
     position: static;
     min-width: 0;
     width: 100%;
-    margin-top: 8px;
+    max-height: 238px;
+    margin-top: 2px;
+    padding: 6px;
+    overflow-y: auto;
+    border-radius: 10px;
+    background: #ffffff;
     box-shadow: none;
   }
 
@@ -2295,6 +2315,19 @@ a {
 
   .profile-create-form {
     grid-template-columns: 1fr;
+  }
+
+  .profile-picker-option,
+  .profile-picker-create {
+    min-height: 42px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    transform: none;
+  }
+
+  .profile-picker-option:hover,
+  .profile-picker-create:hover {
+    transform: none;
   }
 
   .app-navbar-user {
@@ -2312,28 +2345,59 @@ a {
   }
 
   .template-picker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
     width: 100%;
-    justify-content: space-between;
     min-height: 42px;
+    padding: 8px 10px;
     border-radius: 12px;
+  }
+
+  .template-picker-label {
+    align-self: center;
+    font-size: 0.68rem;
   }
 
   .template-picker-trigger {
     min-width: 0;
     width: 100%;
+    justify-content: space-between;
     font-size: 0.9rem;
   }
 
+  .template-picker-value {
+    text-align: left;
+  }
+
   .template-picker-menu {
+    grid-column: 1 / -1;
     position: static;
     min-width: 0;
     width: 100%;
-    margin-top: 8px;
+    max-height: 246px;
+    margin-top: 2px;
+    padding: 6px;
+    overflow-y: auto;
+    border-radius: 10px;
+    background: #ffffff;
     box-shadow: none;
   }
 
   .template-picker-menu::before {
     display: none;
+  }
+
+  .template-picker-option {
+    min-height: 42px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    transform: none;
+  }
+
+  .template-picker-option:hover {
+    transform: none;
   }
 
   .ats-shell {
