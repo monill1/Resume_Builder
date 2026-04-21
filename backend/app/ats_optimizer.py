@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .ats_normalization import best_match_type, canonicalize_term, classify_term, clean_phrase, dedupe_preserve_order, normalize_text
+from .ats_normalization import best_match_type, canonicalize_term, classify_term, clean_phrase, dedupe_preserve_order, is_strong_match_type, normalize_text
 from .ats_scoring import score_resume
 from .job_description import JobSourceContent, parse_job_description
 from .models import ATSAnalysisResponse, ATSOptimizeResponse, ResumePayload
@@ -123,7 +123,7 @@ def _resume_text(resume: ResumePayload) -> str:
 
 def _supports_term(term: str, text: str) -> bool:
     canonical = canonicalize_term(term)
-    if best_match_type(canonical, text):
+    if is_strong_match_type(best_match_type(canonical, text)):
         return True
     normalized = normalize_text(text)
     if canonical == "REST APIs":

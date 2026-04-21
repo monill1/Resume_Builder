@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
 
@@ -333,9 +333,11 @@ class ATSKeywordGap(BaseModel):
 class ATSKeywordMatch(BaseModel):
     keyword: str
     importance: Literal["high", "medium", "low"]
-    match_type: Literal["exact", "semantic"]
+    match_type: Literal["exact", "alias", "phrase", "fuzzy", "related", "semantic"]
     source_sections: List[str] = Field(default_factory=list)
     evidence: List[str] = Field(default_factory=list)
+    evidence_tier: int = Field(default=0, ge=0, le=4)
+    evidence_quality: int = Field(default=0, ge=0, le=100)
 
 
 class ATSFormattingIssue(BaseModel):
@@ -366,6 +368,39 @@ class ATSComparisonItem(BaseModel):
     evidence: List[str] = Field(default_factory=list)
 
 
+class ATSSkillEvidence(BaseModel):
+    keyword: str
+    evidence_tier: int = Field(..., ge=0, le=4)
+    evidence_quality: int = Field(..., ge=0, le=100)
+    source_sections: List[str] = Field(default_factory=list)
+    evidence: List[str] = Field(default_factory=list)
+
+
+class ATSMissingRoleSignal(BaseModel):
+    signal: str
+    details: str
+    severity: Literal["high", "medium", "low"]
+
+
+class ATSStuffingWarning(BaseModel):
+    severity: Literal["high", "medium", "low"]
+    keyword: str
+    details: str
+    recommendation: str
+
+
+class ATSSuggestionsByPriority(BaseModel):
+    high_impact: List[ATSImprovementSuggestion] = Field(default_factory=list)
+    medium_impact: List[ATSImprovementSuggestion] = Field(default_factory=list)
+    low_impact: List[ATSImprovementSuggestion] = Field(default_factory=list)
+
+
+class ATSScoreBreakdown(BaseModel):
+    job_match: Dict[str, int] = Field(default_factory=dict)
+    ats_readability: Dict[str, int] = Field(default_factory=dict)
+    weights: Dict[str, float] = Field(default_factory=dict)
+
+
 class ATSExplanationPanel(BaseModel):
     headline: str
     confidence_label: Literal["Strong Match", "Moderate Match", "Weak Match"]
@@ -380,16 +415,31 @@ class ATSAnalysisResponse(BaseModel):
     job_source: Literal["url", "pasted_description", "pasted_fallback"]
     source_note: Optional[str] = None
     overall_score: int = Field(..., ge=0, le=100)
+    overall_ats_score: int = Field(..., ge=0, le=100)
+    job_match_score: int = Field(..., ge=0, le=100)
+    ats_readability_score: int = Field(..., ge=0, le=100)
+    confidence_score: float = Field(..., ge=0.0, le=1.0)
     confidence_label: Literal["Strong Match", "Moderate Match", "Weak Match"]
+    match_quality_label: Literal["Very Strong Match", "Strong Match", "Moderate Match", "Weak Match", "Poor Match"]
     parsing_confidence: float = Field(..., ge=0.0, le=1.0)
     score_cap_applied: bool = False
     score_cap_reason: Optional[str] = None
     summary: str
     section_scores: ATSSectionScores
+    score_breakdown: ATSScoreBreakdown
     missing_keywords: List[ATSKeywordGap] = Field(default_factory=list)
+    missing_required_skills: List[ATSKeywordGap] = Field(default_factory=list)
+    missing_preferred_skills: List[ATSKeywordGap] = Field(default_factory=list)
+    missing_role_signals: List[ATSMissingRoleSignal] = Field(default_factory=list)
+    missing_education_certifications: List[ATSKeywordGap] = Field(default_factory=list)
     matched_keywords: List[ATSKeywordMatch] = Field(default_factory=list)
+    matched_skills: List[ATSKeywordMatch] = Field(default_factory=list)
+    strong_evidence_skills: List[ATSSkillEvidence] = Field(default_factory=list)
+    weak_evidence_skills: List[ATSSkillEvidence] = Field(default_factory=list)
     formatting_issues: List[ATSFormattingIssue] = Field(default_factory=list)
     critical_gaps: List[ATSCriticalGap] = Field(default_factory=list)
+    stuffing_warnings: List[ATSStuffingWarning] = Field(default_factory=list)
+    suggestions: ATSSuggestionsByPriority = Field(default_factory=ATSSuggestionsByPriority)
     improvement_suggestions: List[ATSImprovementSuggestion] = Field(default_factory=list)
     parse_preview: str
     comparison_view: List[ATSComparisonItem] = Field(default_factory=list)

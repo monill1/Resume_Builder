@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from .ats_config import score_label
+from .ats_config import legacy_score_label
 
 
 def build_explanation_panel(*, overall_score: int, parsing_confidence: float, strengths: list[str], risks: list[str]) -> dict[str, object]:
-    label = score_label(overall_score)
+    label = legacy_score_label(overall_score)
     if label == "Strong Match":
         headline = "Your resume is broadly aligned with the target role."
     elif label == "Moderate Match":

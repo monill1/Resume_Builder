@@ -2521,30 +2521,63 @@ function BulletListEditor({ label, items, addLabel, onChange, onAdd, onRemove })
 }
 
 function ATSResultPanel({ result, optimization }) {
+  const overallScore = result.overall_ats_score ?? result.overall_score;
+  const jobMatchScore = result.job_match_score ?? result.overall_score;
+  const readabilityScore = result.ats_readability_score ?? result.section_scores?.formatting_parseability ?? 0;
+  const confidenceScore = result.confidence_score ?? result.parsing_confidence ?? 0;
+  const missingKeywords = result.missing_keywords ?? [];
+  const matchedKeywords = result.matched_keywords ?? [];
+  const strongEvidenceSkills = result.strong_evidence_skills ?? [];
+  const weakEvidenceSkills = result.weak_evidence_skills ?? [];
+  const suggestionsByPriority = result.suggestions ?? {
+    high_impact: (result.improvement_suggestions ?? []).filter((item) => item.priority === "high"),
+    medium_impact: (result.improvement_suggestions ?? []).filter((item) => item.priority === "medium"),
+    low_impact: (result.improvement_suggestions ?? []).filter((item) => item.priority === "low"),
+  };
+  const groupedSuggestionEntries = [
+    ["high_impact", "High Impact"],
+    ["medium_impact", "Medium Impact"],
+    ["low_impact", "Low Impact"],
+  ];
   const groupedMissingKeywords = {
-    high: result.missing_keywords.filter((item) => item.importance === "high"),
-    medium: result.missing_keywords.filter((item) => item.importance === "medium"),
-    low: result.missing_keywords.filter((item) => item.importance === "low"),
+    high: missingKeywords.filter((item) => item.importance === "high"),
+    medium: missingKeywords.filter((item) => item.importance === "medium"),
+    low: missingKeywords.filter((item) => item.importance === "low"),
   };
   return (
     <div className="ats-result">
-      <div className="ats-score-hero" style={{ "--score": `${result.overall_score}%` }}>
+      <div className="ats-score-hero" style={{ "--score": `${overallScore}%` }}>
         <div className="ats-score-ring">
           <div className="ats-score-ring-inner">
-            <strong>{result.overall_score}</strong>
+            <strong>{overallScore}</strong>
             <span>/100</span>
           </div>
         </div>
         <div className="ats-score-copy">
           <div className="ats-score-topline">
-            <h3>ATS Match Score</h3>
+            <h3>Overall ATS Score</h3>
             <span className={`ats-confidence-pill tone-${confidenceTone(result.confidence_label)}`}>{result.confidence_label}</span>
           </div>
           <p className="ats-job-title">{result.job_title}</p>
           <p>{result.summary}</p>
+          <div className="ats-fix-metrics">
+            <div className="ats-fix-metric-card">
+              <span>Job Match</span>
+              <strong>{jobMatchScore}/100</strong>
+            </div>
+            <div className="ats-fix-metric-card">
+              <span>Readability</span>
+              <strong>{readabilityScore}/100</strong>
+            </div>
+            <div className="ats-fix-metric-card">
+              <span>Reliability</span>
+              <strong>{Math.round(confidenceScore * 100)}%</strong>
+            </div>
+          </div>
           <div className="ats-meta-row">
             <span className="ats-meta-pill">Parsing confidence {Math.round(result.parsing_confidence * 100)}%</span>
             <span className="ats-meta-pill">Source {formatSourceLabel(result.job_source)}</span>
+            {result.match_quality_label ? <span className="ats-meta-pill">{result.match_quality_label}</span> : null}
             {result.score_cap_applied ? <span className="ats-meta-pill is-warning">Score cap applied</span> : null}
           </div>
           {result.source_note ? <p className="ats-source-note">{result.source_note}</p> : null}
@@ -2729,22 +2762,26 @@ function ATSResultPanel({ result, optimization }) {
       <div className="ats-block">
         <div className="ats-block-head">
           <h4>How To Improve</h4>
-          <span className="ats-subtle-label">Exact next edits</span>
+          <span className="ats-subtle-label">Grouped next edits</span>
         </div>
-        {result.improvement_suggestions.length ? (
-          <div className="ats-suggestion-grid">
-            {result.improvement_suggestions.map((item, index) => (
-              <div className="ats-suggestion-card" key={`suggestion-${index}`}>
-                <div className="ats-suggestion-topline">
-                  <span className={`ats-priority-pill ${item.priority}`}>{priorityLabel(item.priority)}</span>
-                  <span className={`ats-issue-tag ${item.issue_type}`}>{item.issue_type}</span>
-                </div>
-                <strong>{item.title}</strong>
-                <p>{item.details}</p>
-                {item.suggested_edit ? <p className="ats-suggested-edit">{item.suggested_edit}</p> : null}
+        {groupedSuggestionEntries.some(([key]) => suggestionsByPriority[key]?.length) ? (
+          groupedSuggestionEntries.map(([key, label]) =>
+            suggestionsByPriority[key]?.length ? (
+              <div className="ats-suggestion-grid" key={key}>
+                {suggestionsByPriority[key].map((item, index) => (
+                  <div className="ats-suggestion-card" key={`suggestion-${key}-${index}`}>
+                    <div className="ats-suggestion-topline">
+                      <span className={`ats-priority-pill ${item.priority}`}>{label}</span>
+                      <span className={`ats-issue-tag ${item.issue_type}`}>{item.issue_type}</span>
+                    </div>
+                    <strong>{item.title}</strong>
+                    <p>{item.details}</p>
+                    {item.suggested_edit ? <p className="ats-suggested-edit">{item.suggested_edit}</p> : null}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            ) : null
+          )
         ) : (
           <p className="ats-empty-text">No recommendations are available yet.</p>
         )}
@@ -2753,12 +2790,60 @@ function ATSResultPanel({ result, optimization }) {
       <div className="ats-double-grid">
         <div className="ats-block">
           <div className="ats-block-head">
+            <h4>Strong Evidence Skills</h4>
+            <span className="ats-subtle-label">Experience/project proof</span>
+          </div>
+          {strongEvidenceSkills.length ? (
+            <div className="ats-match-grid">
+              {strongEvidenceSkills.map((item) => (
+                <div className="ats-match-card" key={`strong-evidence-${item.keyword}`}>
+                  <div className="ats-match-topline">
+                    <strong>{item.keyword}</strong>
+                    <span className="ats-priority-pill high">Tier {item.evidence_tier}</span>
+                  </div>
+                  <p className="ats-match-sections">{item.source_sections.join(", ")}</p>
+                  {item.evidence.length ? <p>{item.evidence[0]}</p> : <p className="ats-empty-text">Evidence snippet unavailable.</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No strongly evidenced skills were detected yet.</p>
+          )}
+        </div>
+
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Weak Evidence Skills</h4>
+            <span className="ats-subtle-label">Skills needing proof</span>
+          </div>
+          {weakEvidenceSkills.length ? (
+            <div className="ats-match-grid">
+              {weakEvidenceSkills.map((item) => (
+                <div className="ats-match-card" key={`weak-evidence-${item.keyword}`}>
+                  <div className="ats-match-topline">
+                    <strong>{item.keyword}</strong>
+                    <span className="ats-priority-pill medium">Tier {item.evidence_tier}</span>
+                  </div>
+                  <p className="ats-match-sections">{item.source_sections.join(", ")}</p>
+                  {item.evidence.length ? <p>{item.evidence[0]}</p> : <p className="ats-empty-text">No supporting evidence found in the resume.</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No skills-only evidence risks were detected.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="ats-double-grid">
+        <div className="ats-block">
+          <div className="ats-block-head">
             <h4>Matched Keywords</h4>
             <span className="ats-subtle-label">Resume evidence</span>
           </div>
-          {result.matched_keywords.length ? (
+          {matchedKeywords.length ? (
             <div className="ats-match-grid">
-              {result.matched_keywords.map((item) => (
+              {matchedKeywords.map((item) => (
                 <div className="ats-match-card" key={`match-${item.keyword}`}>
                   <div className="ats-match-topline">
                     <strong>{item.keyword}</strong>
@@ -2770,7 +2855,7 @@ function ATSResultPanel({ result, optimization }) {
               ))}
             </div>
           ) : (
-            <p className="ats-empty-text">No strong matched keywords were detected yet.</p>
+            <p className="ats-empty-text">No matched keywords were detected yet.</p>
           )}
         </div>
 
@@ -2797,6 +2882,27 @@ function ATSResultPanel({ result, optimization }) {
           )}
         </div>
       </div>
+
+      {result.stuffing_warnings?.length ? (
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Repetition Warnings</h4>
+            <span className="ats-subtle-label">Keyword stuffing checks</span>
+          </div>
+          <div className="ats-warning-list">
+            {result.stuffing_warnings.map((item, index) => (
+              <div className="ats-warning-card" key={`stuffing-${index}`}>
+                <div className="ats-warning-topline">
+                  <strong>{item.keyword}</strong>
+                  <span className={`ats-priority-pill ${item.severity}`}>{priorityLabel(item.severity)}</span>
+                </div>
+                <p>{item.details}</p>
+                <p className="ats-warning-fix">{item.recommendation}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="ats-block parse-preview-block">
         <div className="ats-block-head">

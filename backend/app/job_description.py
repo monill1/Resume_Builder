@@ -132,16 +132,19 @@ def fetch_job_posting(job_url: str) -> JobSourceContent:
 def parse_job_description(source: JobSourceContent) -> JobDescriptionAnalysis:
     combined_text = "\n".join(part for part in [source.title, source.description, source.text] if part).strip()
     lines = _to_lines(combined_text)
-    required_lines = [
+    section_required, section_preferred, section_responsibilities = _extract_sectioned_job_lines(lines)
+    fallback_required_lines = [
         line
         for line in lines
         if _line_matches_any(line, ("required", "must have", "qualification", "requirements"))
         and not _line_matches_any(line, ("preferred", "nice to have", "bonus", "plus", "ideal"))
     ]
-    preferred_lines = [line for line in lines if _line_matches_any(line, ("preferred", "nice to have", "bonus", "plus", "ideal"))]
+    required_lines = section_required or fallback_required_lines
+    fallback_preferred_lines = [line for line in lines if _line_matches_any(line, ("preferred", "nice to have", "bonus", "plus", "ideal"))]
+    preferred_lines = section_preferred or fallback_preferred_lines
     responsibility_lines = [
         line
-        for line in lines
+        for line in (section_responsibilities or lines)
         if _line_matches_any(line, ("responsib", "you will", "you'll", "what you'll do", "what you will do"))
         or _looks_like_responsibility(line)
     ]
@@ -173,6 +176,38 @@ def parse_job_description(source: JobSourceContent) -> JobDescriptionAnalysis:
         location_requirements=_extract_regex_group(lines, LOCATION_RE),
         authorization_requirements=_extract_regex_group(lines, AUTH_RE),
     )
+
+
+def _extract_sectioned_job_lines(lines: list[str]) -> tuple[list[str], list[str], list[str]]:
+    required: list[str] = []
+    preferred: list[str] = []
+    responsibilities: list[str] = []
+    active: str | None = None
+    for line in lines:
+        lowered = line.lower().strip(" :")
+        if _line_matches_any(line, ("responsib", "what you'll do", "what you will do", "you will")):
+            active = "responsibilities"
+            continue
+        if _line_matches_any(line, ("preferred", "nice to have", "bonus", "ideal")):
+            active = "preferred"
+            if len(line.split()) > 3 and lowered not in {"preferred", "preferred qualifications"}:
+                preferred.append(line)
+            continue
+        if _line_matches_any(line, ("required", "must have", "minimum qualifications", "requirements", "qualifications")):
+            active = "required"
+            if len(line.split()) > 3 and lowered not in {"required qualifications", "requirements", "qualifications"}:
+                required.append(line)
+            continue
+        if _line_matches_any(line, ("about us", "benefits", "salary", "equal opportunity")):
+            active = None
+            continue
+        if active == "required":
+            required.append(line)
+        elif active == "preferred":
+            preferred.append(line)
+        elif active == "responsibilities":
+            responsibilities.append(line)
+    return dedupe_preserve_order(required), dedupe_preserve_order(preferred), dedupe_preserve_order(responsibilities)
 
 
 def _extract_title(html: str) -> str:
@@ -243,8 +278,19 @@ def _extract_degree_requirements(lines: list[str]) -> list[str]:
     for line in lines:
         if not _line_matches_any(line, ("degree", "bachelor", "master", "phd", "mba", "graduate")):
             continue
-        degrees.extend(match.group(0) for match in DEGREE_RE.finditer(line))
+        degrees.extend(_normalize_degree(match.group(0)) for match in DEGREE_RE.finditer(line))
     return dedupe_preserve_order(degrees)
+
+
+def _normalize_degree(value: str) -> str:
+    lowered = value.lower().replace("'s", "")
+    if lowered in {"b.tech", "btech", "b.e.", "be", "bs", "ba"}:
+        return "Bachelor"
+    if lowered in {"m.tech", "mtech", "ms", "mba"}:
+        return "Master"
+    if lowered in {"phd", "doctorate"}:
+        return "PhD"
+    return clean_phrase(lowered.title())
 
 
 def _extract_certifications(lines: list[str]) -> list[str]:
