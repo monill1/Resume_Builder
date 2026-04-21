@@ -13,25 +13,33 @@ from .database import (
     DatabaseUnavailableError,
     authenticate_user,
     clear_resume_drafts,
+    create_password_reset_otp,
     create_resume_profile,
     create_session,
-    create_user,
+    create_signup_otp,
     delete_session,
     get_latest_resume_draft,
     get_user_by_session_token,
     init_db,
     list_resume_profiles,
+    reset_password_with_otp,
     save_ats_analysis,
     save_ats_optimization,
     save_pdf_export,
     save_resume_draft,
+    verify_signup_otp,
 )
+from .email_service import EmailDeliveryError, send_password_reset_otp, send_signup_otp, send_welcome_email
 from .models import (
     ATSAnalysisRequest,
     ATSAnalysisResponse,
     ATSOptimizeRequest,
     ATSOptimizeResponse,
     AuthCredentials,
+    AuthOtpStartResponse,
+    AuthOtpVerifyRequest,
+    AuthPasswordResetConfirmRequest,
+    AuthPasswordResetRequest,
     AuthSessionResponse,
     AuthUserResponse,
     ResumeProfileCreateRequest,
@@ -80,6 +88,11 @@ def _raise_database_error(exc: Exception) -> None:
     raise HTTPException(status_code=503, detail=detail) from exc
 
 
+def _raise_email_error(exc: Exception) -> None:
+    logger.warning("Email delivery failed: %s", exc)
+    raise HTTPException(status_code=503, detail="Email could not be sent. Check SMTP configuration and try again.") from exc
+
+
 def _extract_bearer_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Sign in is required.")
@@ -125,15 +138,40 @@ def get_sample_resume() -> SampleResumeResponse:
     return SampleResumeResponse(resume=SAMPLE_RESUME)
 
 
-@app.post("/api/auth/signup", response_model=AuthSessionResponse)
-def sign_up(payload: AuthCredentials) -> AuthSessionResponse:
+@app.post("/api/auth/signup", response_model=AuthOtpStartResponse)
+def sign_up(payload: AuthCredentials) -> AuthOtpStartResponse:
     try:
-        user = create_user(payload.email, payload.password)
-        token = create_session(int(user["id"]))
+        email, otp_code = create_signup_otp(payload.email, payload.password)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         _raise_database_error(exc)
+
+    try:
+        send_signup_otp(email, otp_code)
+    except EmailDeliveryError as exc:
+        _raise_email_error(exc)
+
+    return AuthOtpStartResponse(
+        status="otp_sent",
+        message="Verification code sent. Check your email to finish creating your account.",
+    )
+
+
+@app.post("/api/auth/signup/verify", response_model=AuthSessionResponse)
+def verify_signup(payload: AuthOtpVerifyRequest) -> AuthSessionResponse:
+    try:
+        user = verify_signup_otp(payload.email, payload.otp)
+        token = create_session(int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    try:
+        send_welcome_email(str(user["email"]))
+    except EmailDeliveryError as exc:
+        logger.warning("Welcome email failed for user %s: %s", user["id"], exc)
 
     return _session_payload(user, token)
 
@@ -151,6 +189,40 @@ def sign_in(payload: AuthCredentials) -> AuthSessionResponse:
         _raise_database_error(exc)
 
     return _session_payload(user, token)
+
+
+@app.post("/api/auth/password/forgot", response_model=AuthOtpStartResponse)
+def forgot_password(payload: AuthPasswordResetRequest) -> AuthOtpStartResponse:
+    try:
+        email, otp_code, should_send = create_password_reset_otp(payload.email)
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    if should_send:
+        try:
+            send_password_reset_otp(email, otp_code)
+        except EmailDeliveryError as exc:
+            _raise_email_error(exc)
+
+    return AuthOtpStartResponse(
+        status="otp_sent",
+        message="If an account exists for this email, a password reset code has been sent.",
+    )
+
+
+@app.post("/api/auth/password/reset", response_model=AuthOtpStartResponse)
+def reset_password(payload: AuthPasswordResetConfirmRequest) -> AuthOtpStartResponse:
+    try:
+        updated = reset_password_with_otp(payload.email, payload.otp, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Account was not found.")
+
+    return AuthOtpStartResponse(status="password_reset", message="Password updated. Sign in with your new password.")
 
 
 @app.get("/api/auth/me", response_model=AuthUserResponse)

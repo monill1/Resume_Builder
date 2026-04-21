@@ -283,6 +283,7 @@ function App() {
   const [authMode, setAuthMode] = useState("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authOtp, setAuthOtp] = useState("");
   const [authStatus, setAuthStatus] = useState("Sign in to save your resume data in PostgreSQL.");
   const [authLoading, setAuthLoading] = useState(false);
   const [resumeProfiles, setResumeProfiles] = useState([]);
@@ -487,34 +488,133 @@ function App() {
     window.localStorage.setItem(WORKSPACE_VIEW_KEY, activeWorkspace);
   }, [activeWorkspace]);
 
+  const changeAuthMode = (mode) => {
+    const statusByMode = {
+      signin: "Sign in to save your resume data in PostgreSQL.",
+      signup: "Create an account and verify it by email.",
+      forgot: "Enter your account email to receive a password reset code.",
+    };
+    setAuthMode(mode);
+    setAuthOtp("");
+    setAuthPassword("");
+    setAuthStatus(statusByMode[mode] || "Continue with email verification.");
+  };
+
+  const completeAuthSession = (data) => {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+    setAuthToken(data.token);
+    setAuthUser(data.user);
+    setAuthPassword("");
+    setAuthOtp("");
+    setHasSavedDraft(false);
+    setStatus("Signed in. Your resume data will now save to PostgreSQL.");
+    setAuthStatus("Signed in successfully.");
+  };
+
   const submitAuth = async (event) => {
     event.preventDefault();
     setAuthLoading(true);
-    setAuthStatus(authMode === "signup" ? "Creating your account..." : "Signing you in...");
+    const email = authEmail.trim();
+
+    const statusByMode = {
+      signin: "Signing you in...",
+      signup: "Sending verification code...",
+      "signup-verify": "Verifying your account...",
+      forgot: "Sending reset code...",
+      "reset-verify": "Updating your password...",
+    };
+    setAuthStatus(statusByMode[authMode] || "Please wait...");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/${authMode === "signup" ? "signup" : "login"}`, {
+      if (authMode === "signup") {
+        const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: authPassword }),
+        });
+
+        if (!response.ok) {
+          const message = await readErrorMessage(response, "Unable to send verification code.");
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        setAuthMode("signup-verify");
+        setAuthPassword("");
+        setAuthStatus(data.message || "Verification code sent. Check your email.");
+        return;
+      }
+
+      if (authMode === "signup-verify") {
+        const response = await fetch(`${API_BASE_URL}/api/auth/signup/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, otp: authOtp.trim() }),
+        });
+
+        if (!response.ok) {
+          const message = await readErrorMessage(response, "Unable to verify account.");
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        completeAuthSession(data);
+        return;
+      }
+
+      if (authMode === "forgot") {
+        const response = await fetch(`${API_BASE_URL}/api/auth/password/forgot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+
+        if (!response.ok) {
+          const message = await readErrorMessage(response, "Unable to send reset code.");
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        setAuthMode("reset-verify");
+        setAuthPassword("");
+        setAuthOtp("");
+        setAuthStatus(data.message || "Password reset code sent if the account exists.");
+        return;
+      }
+
+      if (authMode === "reset-verify") {
+        const response = await fetch(`${API_BASE_URL}/api/auth/password/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, otp: authOtp.trim(), password: authPassword }),
+        });
+
+        if (!response.ok) {
+          const message = await readErrorMessage(response, "Unable to reset password.");
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        setAuthMode("signin");
+        setAuthPassword("");
+        setAuthOtp("");
+        setAuthStatus(data.message || "Password updated. Sign in with your new password.");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: authEmail.trim(),
-          password: authPassword,
-        }),
+        body: JSON.stringify({ email, password: authPassword }),
       });
 
       if (!response.ok) {
-        const message = await readErrorMessage(response, authMode === "signup" ? "Unable to create account." : "Unable to sign in.");
+        const message = await readErrorMessage(response, "Unable to sign in.");
         throw new Error(message);
       }
 
       const data = await response.json();
-      window.localStorage.setItem(AUTH_TOKEN_KEY, data.token);
-      setAuthToken(data.token);
-      setAuthUser(data.user);
-      setAuthPassword("");
-      setHasSavedDraft(false);
-      setStatus("Signed in. Your resume data will now save to PostgreSQL.");
-      setAuthStatus("Signed in successfully.");
+      completeAuthSession(data);
     } catch (error) {
       setAuthStatus(error.message);
     } finally {
@@ -1022,11 +1122,13 @@ function App() {
         mode={authMode}
         email={authEmail}
         password={authPassword}
+        otp={authOtp}
         status={authChecking ? "Checking your saved session..." : authStatus}
         loading={authLoading || authChecking}
-        onModeChange={setAuthMode}
+        onModeChange={changeAuthMode}
         onEmailChange={setAuthEmail}
         onPasswordChange={setAuthPassword}
+        onOtpChange={setAuthOtp}
         onSubmit={submitAuth}
       />
     );
@@ -1272,21 +1374,47 @@ function AuthScreen({
   mode,
   email,
   password,
+  otp,
   status,
   loading,
   onModeChange,
   onEmailChange,
   onPasswordChange,
+  onOtpChange,
   onSubmit,
 }) {
   const isSignUp = mode === "signup";
+  const isSignupVerify = mode === "signup-verify";
+  const isForgot = mode === "forgot";
+  const isResetVerify = mode === "reset-verify";
+  const needsOtp = isSignupVerify || isResetVerify;
+  const needsPassword = !isForgot && !isSignupVerify;
+  const tabMode = isSignUp || isSignupVerify ? "signup" : isForgot || isResetVerify ? "forgot" : "signin";
+  const heading = isSignupVerify
+    ? "Verify your resume account."
+    : isForgot || isResetVerify
+      ? "Reset your password."
+      : isSignUp
+        ? "Create your resume account."
+        : "Sign in to your resume workspace.";
+  const buttonLabel = loading
+    ? "Please wait..."
+    : isSignupVerify
+      ? "Verify Account"
+      : isForgot
+        ? "Send Reset Code"
+        : isResetVerify
+          ? "Update Password"
+          : isSignUp
+            ? "Create Account"
+            : "Sign In";
 
   return (
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-copy">
           <p className="eyebrow">ATS Resume Builder</p>
-          <h1>{isSignUp ? "Create your resume account." : "Sign in to your resume workspace."}</h1>
+          <h1>{heading}</h1>
           <p>
             Your drafts, PDF exports, and ATS runs are saved in PostgreSQL under your account.
           </p>
@@ -1296,17 +1424,24 @@ function AuthScreen({
           <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
             <button
               type="button"
-              className={mode === "signin" ? "auth-tab is-active" : "auth-tab"}
+              className={tabMode === "signin" ? "auth-tab is-active" : "auth-tab"}
               onClick={() => onModeChange("signin")}
             >
               Sign In
             </button>
             <button
               type="button"
-              className={mode === "signup" ? "auth-tab is-active" : "auth-tab"}
+              className={tabMode === "signup" ? "auth-tab is-active" : "auth-tab"}
               onClick={() => onModeChange("signup")}
             >
               Sign Up
+            </button>
+            <button
+              type="button"
+              className={tabMode === "forgot" ? "auth-tab is-active" : "auth-tab"}
+              onClick={() => onModeChange("forgot")}
+            >
+              Reset Password
             </button>
           </div>
 
@@ -1322,21 +1457,41 @@ function AuthScreen({
             />
           </label>
 
-          <label className="field">
-            <span>Password</span>
-            <input
-              type="password"
-              value={password}
-              minLength={8}
-              maxLength={128}
-              autoComplete={isSignUp ? "new-password" : "current-password"}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              required
-            />
-          </label>
+          {needsOtp ? (
+            <label className="field">
+              <span>Verification Code</span>
+              <input
+                type="text"
+                value={otp}
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                minLength={6}
+                maxLength={6}
+                autoComplete="one-time-code"
+                spellCheck={false}
+                onChange={(event) => onOtpChange(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                required
+              />
+            </label>
+          ) : null}
+
+          {needsPassword ? (
+            <label className="field">
+              <span>{isResetVerify ? "New Password" : "Password"}</span>
+              <input
+                type="password"
+                value={password}
+                minLength={8}
+                maxLength={128}
+                autoComplete={isSignUp || isResetVerify ? "new-password" : "current-password"}
+                onChange={(event) => onPasswordChange(event.target.value)}
+                required
+              />
+            </label>
+          ) : null}
 
           <Button variant="primary" type="submit" disabled={loading}>
-            {loading ? "Please wait..." : isSignUp ? "Create Account" : "Sign In"}
+            {buttonLabel}
           </Button>
 
           <p className="auth-status">{status}</p>

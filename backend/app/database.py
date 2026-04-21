@@ -5,7 +5,7 @@ import os
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +102,10 @@ def _iso_or_none(value: Any) -> str | None:
 
 PASSWORD_HASH_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 310_000
+OTP_TTL_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+OTP_PURPOSE_SIGNUP = "signup"
+OTP_PURPOSE_PASSWORD_RESET = "password_reset"
 
 
 def _hash_password(password: str) -> str:
@@ -113,6 +117,19 @@ def _hash_password(password: str) -> str:
         PASSWORD_HASH_ITERATIONS,
     ).hex()
     return f"{PASSWORD_HASH_ALGORITHM}${PASSWORD_HASH_ITERATIONS}${salt}${password_hash}"
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _hash_otp(email: str, purpose: str, code: str) -> str:
+    normalized_code = "".join(character for character in code if character.isdigit())
+    return hashlib.sha256(f"{email}:{purpose}:{normalized_code}".encode("utf-8")).hexdigest()
+
+
+def _otp_expires_at() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
 
 
 def _verify_password(password: str, stored_hash: str) -> bool:
@@ -158,6 +175,27 @@ def init_db() -> None:
                     token_hash TEXT NOT NULL UNIQUE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS auth_otps (
+                    id BIGSERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    password_hash TEXT,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    consumed_at TIMESTAMPTZ,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_auth_otps_email_purpose_created
+                ON auth_otps (email, purpose, created_at DESC);
                 """
             )
             cursor.execute(
@@ -260,6 +298,171 @@ def _public_user(row: dict[str, Any]) -> dict[str, Any]:
         "email": row["email"],
         "created_at": _iso_or_none(row.get("created_at")),
     }
+
+
+def _consume_otp(email: str, purpose: str, code: str) -> dict[str, Any]:
+    normalized_email = _normalize_email(email)
+    normalized_code = "".join(character for character in code.strip() if character.isdigit())
+    if len(normalized_code) != 6:
+        raise ValueError("Enter the 6-digit verification code.")
+
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, code_hash, password_hash, attempts, expires_at <= NOW() AS is_expired
+                FROM auth_otps
+                WHERE email = %s AND purpose = %s AND consumed_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1;
+                """,
+                (normalized_email, purpose),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError("Verification code was not found. Request a new code.")
+
+            if row["is_expired"]:
+                cursor.execute("UPDATE auth_otps SET consumed_at = NOW() WHERE id = %s;", (row["id"],))
+                raise ValueError("Verification code has expired. Request a new code.")
+
+            if int(row["attempts"]) >= OTP_MAX_ATTEMPTS:
+                cursor.execute("UPDATE auth_otps SET consumed_at = NOW() WHERE id = %s;", (row["id"],))
+                raise ValueError("Too many verification attempts. Request a new code.")
+
+            if not hmac.compare_digest(row["code_hash"], _hash_otp(normalized_email, purpose, normalized_code)):
+                next_attempts = int(row["attempts"]) + 1
+                if next_attempts >= OTP_MAX_ATTEMPTS:
+                    cursor.execute("UPDATE auth_otps SET attempts = %s, consumed_at = NOW() WHERE id = %s;", (next_attempts, row["id"]))
+                    raise ValueError("Too many verification attempts. Request a new code.")
+                cursor.execute("UPDATE auth_otps SET attempts = %s WHERE id = %s;", (next_attempts, row["id"]))
+                raise ValueError("Invalid verification code.")
+
+            cursor.execute("UPDATE auth_otps SET consumed_at = NOW() WHERE id = %s;", (row["id"],))
+
+    return dict(row)
+
+
+def _replace_pending_otp(
+    cursor: Any,
+    *,
+    email: str,
+    purpose: str,
+    code: str,
+    password_hash: str | None = None,
+) -> None:
+    cursor.execute(
+        """
+        UPDATE auth_otps
+        SET consumed_at = NOW()
+        WHERE email = %s AND purpose = %s AND consumed_at IS NULL;
+        """,
+        (email, purpose),
+    )
+    cursor.execute(
+        """
+        INSERT INTO auth_otps (email, purpose, code_hash, password_hash, expires_at)
+        VALUES (%s, %s, %s, %s, %s);
+        """,
+        (email, purpose, _hash_otp(email, purpose, code), password_hash, _otp_expires_at()),
+    )
+
+
+def create_signup_otp(email: str, password: str) -> tuple[str, str]:
+    normalized_email = _normalize_email(email)
+    code = _generate_otp()
+    _, dict_row, _ = _import_psycopg()
+
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM auth_users WHERE email = %s;", (normalized_email,))
+            if cursor.fetchone():
+                raise ValueError("An account already exists for this email.")
+
+            _replace_pending_otp(
+                cursor,
+                email=normalized_email,
+                purpose=OTP_PURPOSE_SIGNUP,
+                code=code,
+                password_hash=_hash_password(password),
+            )
+
+    return normalized_email, code
+
+
+def verify_signup_otp(email: str, code: str) -> dict[str, Any]:
+    normalized_email = _normalize_email(email)
+    row = _consume_otp(normalized_email, OTP_PURPOSE_SIGNUP, code)
+    password_hash = row.get("password_hash")
+    if not password_hash:
+        raise ValueError("Verification code was not found. Request a new code.")
+
+    _, dict_row, _ = _import_psycopg()
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM auth_users WHERE email = %s;", (normalized_email,))
+            if cursor.fetchone():
+                raise ValueError("An account already exists for this email.")
+
+            cursor.execute(
+                """
+                INSERT INTO auth_users (email, password_hash)
+                VALUES (%s, %s)
+                RETURNING id, email, created_at;
+                """,
+                (normalized_email, password_hash),
+            )
+            user_row = cursor.fetchone()
+
+    return _public_user(user_row)
+
+
+def create_password_reset_otp(email: str) -> tuple[str, str, bool]:
+    normalized_email = _normalize_email(email)
+    code = _generate_otp()
+    _, dict_row, _ = _import_psycopg()
+
+    with _connect(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM auth_users WHERE email = %s;", (normalized_email,))
+            user_exists = cursor.fetchone() is not None
+            if user_exists:
+                _replace_pending_otp(
+                    cursor,
+                    email=normalized_email,
+                    purpose=OTP_PURPOSE_PASSWORD_RESET,
+                    code=code,
+                )
+
+    return normalized_email, code, user_exists
+
+
+def reset_password_with_otp(email: str, code: str, password: str) -> bool:
+    normalized_email = _normalize_email(email)
+    _consume_otp(normalized_email, OTP_PURPOSE_PASSWORD_RESET, code)
+
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE auth_users
+                SET password_hash = %s
+                WHERE email = %s;
+                """,
+                (_hash_password(password), normalized_email),
+            )
+            updated = bool(cursor.rowcount)
+            cursor.execute(
+                """
+                DELETE FROM auth_sessions
+                USING auth_users
+                WHERE auth_sessions.user_id = auth_users.id AND auth_users.email = %s;
+                """,
+                (normalized_email,),
+            )
+
+    return updated
 
 
 def create_user(email: str, password: str) -> dict[str, Any]:
