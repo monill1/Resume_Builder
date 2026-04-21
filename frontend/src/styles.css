@@ -2253,7 +2253,14 @@ a {
   }
 
   .save-menu {
+    display: flex;
+    flex-direction: column;
     width: 100%;
+  }
+
+  .save-menu-trigger {
+    width: 100%;
+    justify-content: center;
   }
 
   .save-menu-list {
@@ -2261,11 +2268,27 @@ a {
     min-width: 0;
     width: 100%;
     margin-top: 8px;
+    padding: 6px;
+    border-radius: 10px;
+    background: #ffffff;
     box-shadow: none;
   }
 
   .save-menu-list::before {
     display: none;
+  }
+
+  .save-menu-option {
+    min-height: 42px;
+    justify-content: center;
+    padding: 10px 12px;
+    border-radius: 8px;
+    text-align: center;
+    transform: none;
+  }
+
+  .save-menu-option:hover:not(:disabled) {
+    transform: none;
   }
 
   .profile-picker {
