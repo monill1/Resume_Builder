@@ -307,7 +307,7 @@ function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authOtp, setAuthOtp] = useState("");
-  const [authStatus, setAuthStatus] = useState("Sign in to save your resume data in PostgreSQL.");
+  const [authStatus, setAuthStatus] = useState("Sign in to access your resume workspace.");
   const [authLoading, setAuthLoading] = useState(false);
   const [resumeProfiles, setResumeProfiles] = useState([]);
   const [activeProfileId, setActiveProfileId] = useState(() => window.localStorage.getItem(RESUME_ACTIVE_PROFILE_KEY) || "");
@@ -568,7 +568,7 @@ function App() {
 
   const changeAuthMode = (mode) => {
     const statusByMode = {
-      signin: "Sign in to save your resume data in PostgreSQL.",
+      signin: "Sign in to access your resume workspace.",
       signup: "Create an account and verify it by email.",
       forgot: "Enter your account email to receive a password reset code.",
     };
@@ -585,7 +585,7 @@ function App() {
     setAuthPassword("");
     setAuthOtp("");
     setHasSavedDraft(false);
-    setStatus("Signed in. Your resume data will now save to PostgreSQL.");
+    setStatus("Signed in. Your resume workspace is ready.");
     setAuthStatus("Signed in successfully.");
   };
 
@@ -1609,7 +1609,7 @@ function AuthScreen({
           <p className="eyebrow">ATS Resume Builder</p>
           <h1>{heading}</h1>
           <p>
-            Your drafts, PDF exports, and ATS runs are saved in PostgreSQL under your account.
+            Manage your drafts, PDF exports, and ATS checks securely from one workspace.
           </p>
         </div>
 
