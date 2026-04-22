@@ -344,7 +344,7 @@ def extract_known_terms(text: str, *, categories: set[str] | None = None) -> lis
     for rule in KEYWORD_RULES:
         if categories and rule.category not in categories:
             continue
-        if any(best_match_type(alias, text) in {"exact", "alias", "phrase"} for alias in (rule.canonical, *rule.aliases)):
+        if any(exact_phrase_present(alias, text) or semantic_phrase_present(alias, text) for alias in (rule.canonical, *rule.aliases)):
             found.append(rule.canonical)
     return dedupe_canonical_terms(found)
 

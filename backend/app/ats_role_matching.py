@@ -60,7 +60,7 @@ class RoleMatchResult:
 
 
 def match_role(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> RoleMatchResult:
-    job_family = detect_role_family(job.title)
+    job_family = detect_role_family(" ".join([job.title, job.source.description, job.source.text[:1200]]))
     resume_title_text = " ".join(resume.experience_titles + [resume.section_text.get("summary", "")])
     resume_family = detect_role_family(resume_title_text)
     title_similarity = max((similarity_ratio(job.title, title) for title in resume.experience_titles), default=0.0)

@@ -227,5 +227,155 @@ Responsibilities:
         self.assertNotIn("Kubernetes", optimized_skill_items)
         self.assertIn("FastAPI", optimized_skill_items)
 
+    def test_strong_backend_match_exposes_bullet_requirement_evidence(self) -> None:
+        result = analyze_case("backend_developer")
+
+        self.assertEqual(result.detected_role_family, "backend_engineer")
+        self.assertGreaterEqual(result.score_breakdown.job_match["semantic_requirement_match"], 55)
+        self.assertGreaterEqual(result.responsibility_match_score, 70)
+        self.assertTrue(result.semantic_requirement_matches)
+        self.assertTrue(any(item["matched_resume_bullet"] for item in result.matched_requirements))
+        self.assertIn("responsibility_match", result.weight_profile_used)
+
+    def test_semantic_similarity_without_exact_keyword_gets_partial_credit(self) -> None:
+        resume = ATS_SAMPLE_CASES["backend_developer"]["resume"].model_copy(deep=True)
+        resume.basics.headline = "Python API Developer"
+        resume.basics.summary = "Python developer building database-backed services and partner integrations."
+        resume.skills[0].items = ["Python", "REST APIs", "PostgreSQL", "SQL"]
+        resume.skills[1].items = ["Git", "CI/CD"]
+        resume.experience[0].achievements = [
+            "Developed REST APIs with Python and PostgreSQL for customer reporting workflows.",
+            "Improved endpoint reliability by documenting service contracts and error handling.",
+        ]
+        resume.experience = resume.experience[:1]
+        resume.projects = []
+        jd = """
+Backend Engineer
+Required qualifications:
+- Build scalable APIs using FastAPI.
+Responsibilities:
+- Build database-backed API services for customer workflows.
+""".strip()
+
+        result = analyze_resume(resume, jd, "Backend Engineer")
+        best = max(item["semantic_score"] for item in result.semantic_requirement_matches)
+
+        self.assertGreaterEqual(best, 50)
+        self.assertTrue(any("Developed REST APIs" in item["matched_resume_bullet"] for item in result.semantic_requirement_matches))
+        self.assertIn("FastAPI", {item.keyword for item in result.missing_required_skills})
+
+    def test_keywords_without_responsibility_evidence_stay_capped(self) -> None:
+        resume = ATS_SAMPLE_CASES["backend_developer"]["resume"].model_copy(deep=True)
+        resume.basics.headline = "Backend Engineer"
+        resume.basics.summary = "Backend engineer with Python, FastAPI, PostgreSQL, Docker, AWS, REST APIs, and CI/CD."
+        resume.skills[0].items = ["Python", "FastAPI", "REST APIs", "PostgreSQL", "Docker", "AWS", "CI/CD"]
+        resume.projects = []
+        for item in resume.experience:
+            item.achievements = ["Supported sprint planning, documentation, and team status updates."]
+
+        result = analyze_resume(resume, BACKEND_JD, "Backend Developer")
+
+        self.assertGreater(result.score_breakdown.job_match["skills_match"], result.responsibility_match_score)
+        self.assertLess(result.job_match_score, 75)
+        self.assertGreaterEqual(len(result.matched_keywords), 5)
+        self.assertLess(result.responsibility_match_score, 45)
+
+    def test_good_formatting_but_weak_real_fit_has_low_job_match(self) -> None:
+        result = analyze_resume(ATS_SAMPLE_CASES["data_analyst"]["resume"], BACKEND_JD, "Backend Developer")
+
+        self.assertGreaterEqual(result.ats_readability_score, 85)
+        self.assertLess(result.score_breakdown.job_match["semantic_requirement_match"], 50)
+        self.assertLess(result.job_match_score, 70)
+
+    def test_multiple_missing_required_skills_apply_strict_cap(self) -> None:
+        jd = """
+Backend Developer
+Required qualifications:
+- Experience with Kubernetes and GraphQL.
+Preferred qualifications:
+- Python, FastAPI, REST APIs, PostgreSQL, Docker, AWS, SQL, and Redis.
+Responsibilities:
+- Build backend APIs, design database services, and partner with product teams.
+""".strip()
+        result = analyze_resume(ATS_SAMPLE_CASES["backend_developer"]["resume"], jd, "Backend Developer")
+
+        self.assertGreaterEqual(len(result.missing_required_skills), 2)
+        self.assertTrue(any(cap["cap_name"] == "multiple_required_hard_skills_missing" for cap in result.score_caps_applied))
+        self.assertLessEqual(result.job_match_score, 65)
+
+    def test_role_mismatch_lowers_score_and_reports_role_family_gap(self) -> None:
+        jd = """
+Data Scientist
+Required qualifications:
+- 4+ years building machine learning models with Python, statistics, and feature engineering.
+- Experience with PyTorch, model evaluation, and data science experimentation.
+Responsibilities:
+- Build production models, analyze datasets, and communicate model performance.
+""".strip()
+        result = analyze_resume(ATS_SAMPLE_CASES["backend_developer"]["resume"], jd, "Data Scientist")
+
+        self.assertEqual(result.detected_role_family, "data_scientist")
+        self.assertNotEqual(result.detected_resume_role_family, "data_scientist")
+        self.assertLess(result.score_breakdown.job_match["role_alignment"], 70)
+        self.assertLess(result.job_match_score, 75)
+
+    def test_low_confidence_when_job_description_has_few_extractable_signals(self) -> None:
+        noisy_jd = """
+General Teammate
+We need someone helpful who can support work across teams and learn quickly.
+Responsibilities:
+- Help with tasks.
+- Work with people.
+- Improve things when needed.
+""".strip()
+        result = analyze_resume(ATS_SAMPLE_CASES["backend_developer"]["resume"], noisy_jd, "General Teammate")
+
+        self.assertLess(result.confidence_score, 0.65)
+        self.assertLess(result.confidence_factors["jd_parse_quality"], 0.65)
+
+    def test_high_confidence_with_strong_extracted_signals(self) -> None:
+        result = analyze_case("backend_developer")
+
+        self.assertGreaterEqual(result.confidence_score, 0.72)
+        self.assertGreaterEqual(result.confidence_factors["resume_parse_quality"], 0.9)
+        self.assertGreaterEqual(result.confidence_factors["signal_density"], 0.9)
+
+    def test_entry_level_and_senior_jobs_select_different_weight_profiles(self) -> None:
+        entry_jd = """
+Entry Level Data Analyst
+Requirements:
+- SQL, Excel, dashboards, and stakeholder communication.
+Responsibilities:
+- Create dashboards and clean datasets for business reporting.
+""".strip()
+        senior_jd = """
+Senior Backend Engineer
+Requirements:
+- 6+ years building backend architecture with Python, FastAPI, PostgreSQL, Docker, and AWS.
+Responsibilities:
+- Own backend architecture, build APIs, optimize performance, and lead service delivery.
+""".strip()
+
+        entry_result = analyze_resume(ATS_SAMPLE_CASES["data_analyst"]["resume"], entry_jd, "Entry Level Data Analyst")
+        senior_result = analyze_resume(ATS_SAMPLE_CASES["backend_developer"]["resume"], senior_jd, "Senior Backend Engineer")
+
+        self.assertEqual(entry_result.weight_profile_name, "entry_data_analyst")
+        self.assertEqual(senior_result.weight_profile_name, "senior_backend_engineer")
+        self.assertGreater(entry_result.weight_profile_used["projects_relevance"], senior_result.weight_profile_used["projects_relevance"])
+        self.assertGreater(senior_result.weight_profile_used["seniority_years_match"], entry_result.weight_profile_used["seniority_years_match"])
+
+    def test_skills_list_mentions_score_below_experience_bullet_evidence(self) -> None:
+        strong = analyze_case("backend_developer")
+        skills_only_resume = ATS_SAMPLE_CASES["backend_developer"]["resume"].model_copy(deep=True)
+        skills_only_resume.projects = []
+        for item in skills_only_resume.experience:
+            item.achievements = ["Coordinated internal planning and maintained project documentation."]
+
+        skills_only = analyze_resume(skills_only_resume, BACKEND_JD, "Backend Developer")
+
+        self.assertGreater(strong.responsibility_match_score, skills_only.responsibility_match_score)
+        self.assertGreater(strong.score_breakdown.job_match["semantic_requirement_match"], skills_only.score_breakdown.job_match["semantic_requirement_match"])
+        self.assertLess(skills_only.job_match_score, strong.job_match_score)
+
 if __name__ == "__main__":
     unittest.main()

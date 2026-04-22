@@ -48,6 +48,7 @@ class JobSourceContent:
 class JobDescriptionAnalysis:
     source: JobSourceContent
     title: str
+    requirement_lines: list[str]
     required_skills: list[str]
     preferred_skills: list[str]
     tools: list[str]
@@ -164,6 +165,7 @@ def parse_job_description(source: JobSourceContent) -> JobDescriptionAnalysis:
     return JobDescriptionAnalysis(
         source=source,
         title=clean_phrase(source.title) or _guess_title_from_text(source.text),
+        requirement_lines=dedupe_preserve_order([*required_lines, *preferred_lines, *responsibility_lines])[:18],
         required_skills=required_skills,
         preferred_skills=preferred_skills,
         tools=tools,

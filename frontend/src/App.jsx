@@ -2529,6 +2529,12 @@ function ATSResultPanel({ result, optimization }) {
   const matchedKeywords = result.matched_keywords ?? [];
   const strongEvidenceSkills = result.strong_evidence_skills ?? [];
   const weakEvidenceSkills = result.weak_evidence_skills ?? [];
+  const semanticMatches = result.semantic_requirement_matches ?? [];
+  const matchedResponsibilities = result.matched_responsibilities ?? [];
+  const missingResponsibilities = result.missing_responsibilities ?? [];
+  const scoreCapsApplied = result.score_caps_applied ?? [];
+  const confidenceFactors = result.confidence_factors ?? {};
+  const detectedRoleLabel = result.detected_role_family ? result.detected_role_family.replaceAll("_", " ") : "";
   const suggestionsByPriority = result.suggestions ?? {
     high_impact: (result.improvement_suggestions ?? []).filter((item) => item.priority === "high"),
     medium_impact: (result.improvement_suggestions ?? []).filter((item) => item.priority === "medium"),
@@ -2577,6 +2583,8 @@ function ATSResultPanel({ result, optimization }) {
           <div className="ats-meta-row">
             <span className="ats-meta-pill">Parsing confidence {Math.round(result.parsing_confidence * 100)}%</span>
             <span className="ats-meta-pill">Source {formatSourceLabel(result.job_source)}</span>
+            {detectedRoleLabel ? <span className="ats-meta-pill">Role {detectedRoleLabel}</span> : null}
+            {result.weight_profile_name ? <span className="ats-meta-pill">Weights {result.weight_profile_name.replaceAll("_", " ")}</span> : null}
             {result.match_quality_label ? <span className="ats-meta-pill">{result.match_quality_label}</span> : null}
             {result.score_cap_applied ? <span className="ats-meta-pill is-warning">Score cap applied</span> : null}
           </div>
@@ -2689,6 +2697,103 @@ function ATSResultPanel({ result, optimization }) {
             </div>
           );
         })}
+      </div>
+
+      <div className="ats-double-grid">
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Confidence Factors</h4>
+            <span className="ats-subtle-label">{Math.round(confidenceScore * 100)}% reliability</span>
+          </div>
+          {Object.entries(confidenceFactors).length ? (
+            <div className="ats-comparison-grid">
+              {Object.entries(confidenceFactors).map(([key, value]) => (
+                <div className="ats-comparison-card" key={`confidence-${key}`}>
+                  <div className="ats-comparison-topline">
+                    <strong>{key.replaceAll("_", " ")}</strong>
+                    <span className="ats-meta-pill">{Math.round(value * 100)}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No confidence factors returned.</p>
+          )}
+        </div>
+
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Score Caps</h4>
+            <span className="ats-subtle-label">Calibration guardrails</span>
+          </div>
+          {scoreCapsApplied.length ? (
+            <div className="ats-warning-list">
+              {scoreCapsApplied.map((item, index) => (
+                <div className="ats-warning-card" key={`score-cap-${index}`}>
+                  <div className="ats-warning-topline">
+                    <strong>{item.cap_name?.replaceAll("_", " ") ?? "Score cap"}</strong>
+                    <span className="ats-priority-pill high">Cap {item.cap}</span>
+                  </div>
+                  <p>{item.reason}</p>
+                  {item.triggered_by ? <p className="ats-warning-fix">{item.triggered_by}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No score caps were triggered.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="ats-double-grid">
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Requirement Evidence</h4>
+            <span className="ats-subtle-label">JD bullet to resume bullet</span>
+          </div>
+          {semanticMatches.length ? (
+            <div className="ats-match-grid">
+              {semanticMatches.slice(0, 6).map((item, index) => (
+                <div className="ats-match-card" key={`semantic-${index}`}>
+                  <div className="ats-match-topline">
+                    <strong>{item.job_requirement}</strong>
+                    <span className={`ats-status-pill ${item.match_strength === "strong" ? "matched" : item.match_strength}`}>{item.semantic_score}/100</span>
+                  </div>
+                  {item.matched_resume_bullet ? <p>{item.matched_resume_bullet}</p> : <p className="ats-empty-text">No supporting bullet found.</p>}
+                  {item.resume_section ? <p className="ats-match-sections">{item.resume_section}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No requirement evidence returned.</p>
+          )}
+        </div>
+
+        <div className="ats-block">
+          <div className="ats-block-head">
+            <h4>Responsibility Alignment</h4>
+            <span className="ats-subtle-label">{result.responsibility_match_score ?? 0}/100</span>
+          </div>
+          {matchedResponsibilities.length || missingResponsibilities.length ? (
+            <div className="ats-match-grid">
+              {[...matchedResponsibilities.slice(0, 3), ...missingResponsibilities.slice(0, 3)].map((item, index) => (
+                <div className="ats-match-card" key={`responsibility-${index}`}>
+                  <div className="ats-match-topline">
+                    <strong>{item.responsibility}</strong>
+                    <span className={`ats-status-pill ${item.score >= 62 ? "matched" : "missing"}`}>{item.score ?? item.best_score}/100</span>
+                  </div>
+                  {item.matched_resume_bullet || item.best_resume_bullet ? (
+                    <p>{item.matched_resume_bullet ?? item.best_resume_bullet}</p>
+                  ) : (
+                    <p className="ats-empty-text">No supporting bullet found.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="ats-empty-text">No responsibility matches returned.</p>
+          )}
+        </div>
       </div>
 
       <div className="ats-keyword-priority-grid">

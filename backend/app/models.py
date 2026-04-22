@@ -399,6 +399,7 @@ class ATSScoreBreakdown(BaseModel):
     job_match: Dict[str, int] = Field(default_factory=dict)
     ats_readability: Dict[str, int] = Field(default_factory=dict)
     weights: Dict[str, float] = Field(default_factory=dict)
+    job_match_weights: Dict[str, float] = Field(default_factory=dict)
 
 
 class ATSExplanationPanel(BaseModel):
@@ -419,11 +420,24 @@ class ATSAnalysisResponse(BaseModel):
     job_match_score: int = Field(..., ge=0, le=100)
     ats_readability_score: int = Field(..., ge=0, le=100)
     confidence_score: float = Field(..., ge=0.0, le=1.0)
+    confidence_factors: Dict[str, float] = Field(default_factory=dict)
     confidence_label: Literal["Strong Match", "Moderate Match", "Weak Match"]
     match_quality_label: Literal["Very Strong Match", "Strong Match", "Moderate Match", "Weak Match", "Poor Match"]
     parsing_confidence: float = Field(..., ge=0.0, le=1.0)
     score_cap_applied: bool = False
     score_cap_reason: Optional[str] = None
+    score_caps_applied: List[Dict[str, Any]] = Field(default_factory=list)
+    detected_role_family: str = ""
+    detected_resume_role_family: str = ""
+    weight_profile_name: str = ""
+    weight_profile_used: Dict[str, float] = Field(default_factory=dict)
+    matched_requirements: List[Dict[str, Any]] = Field(default_factory=list)
+    weakly_matched_requirements: List[Dict[str, Any]] = Field(default_factory=list)
+    unmatched_requirements: List[Dict[str, Any]] = Field(default_factory=list)
+    matched_responsibilities: List[Dict[str, Any]] = Field(default_factory=list)
+    missing_responsibilities: List[Dict[str, Any]] = Field(default_factory=list)
+    semantic_requirement_matches: List[Dict[str, Any]] = Field(default_factory=list)
+    responsibility_match_score: int = Field(default=0, ge=0, le=100)
     summary: str
     section_scores: ATSSectionScores
     score_breakdown: ATSScoreBreakdown
