@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +12,11 @@ from ..resume_parser import ResumeAnalysis
 
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+FALLBACK_MODEL_NAME = "local-tfidf-semantic-fallback"
+SEMANTIC_ENGINE_ENV = "ATS_SEMANTIC_ENGINE"
+MIN_HF_MEMORY_MB = 900
+
+logger = logging.getLogger(__name__)
 
 SECTION_WEIGHTS = {
     "experience": 0.40,
@@ -41,6 +48,7 @@ EDUCATION_RELEVANCE_TERMS = {
 }
 
 _MODEL: Any | None = None
+_MODEL_LOAD_FAILED = False
 
 
 @dataclass(frozen=True)
@@ -63,7 +71,16 @@ class SemanticMatcherResult:
 
 
 def warm_semantic_model() -> None:
-    """Load the sentence-transformer once during application startup."""
+    """Load the sentence-transformer once when the host has enough memory.
+
+    Render free instances are currently limited to 512 MB. Importing PyTorch
+    and loading MiniLM can exceed that before the API binds to its port, so
+    auto mode skips warmup on constrained hosts and uses the deterministic
+    fallback matcher instead.
+    """
+    if not _should_use_hf_model():
+        logger.info("Semantic matcher warmup skipped; using local fallback matcher.")
+        return
     get_semantic_model()
 
 
@@ -73,11 +90,19 @@ def get_semantic_model() -> Any:
     The import is intentionally lazy so unit tests and non-ATS imports do not
     pay model startup cost. FastAPI startup calls this once in production.
     """
-    global _MODEL
+    global _MODEL, _MODEL_LOAD_FAILED
+    if not _should_use_hf_model():
+        raise RuntimeError("Hugging Face semantic model disabled for this runtime.")
+    if _MODEL_LOAD_FAILED:
+        raise RuntimeError("Hugging Face semantic model previously failed to load.")
     if _MODEL is None:
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
 
-        _MODEL = SentenceTransformer(MODEL_NAME)
+            _MODEL = SentenceTransformer(MODEL_NAME)
+        except Exception:
+            _MODEL_LOAD_FAILED = True
+            raise
     return _MODEL
 
 
@@ -88,10 +113,12 @@ def compute_semantic_match(job: JobDescriptionAnalysis, resume: ResumeAnalysis) 
         return _empty_result(jd_chunks, resume_chunks)
 
     model_available = True
+    model_name = MODEL_NAME
     try:
         embeddings = _embed_texts([*jd_chunks, *[chunk.weighted_text for chunk in resume_chunks]])
     except Exception:
         model_available = False
+        model_name = FALLBACK_MODEL_NAME
         embeddings = _fallback_embeddings([*jd_chunks, *[chunk.weighted_text for chunk in resume_chunks]])
 
     jd_embeddings = embeddings[: len(jd_chunks)]
@@ -132,9 +159,62 @@ def compute_semantic_match(job: JobDescriptionAnalysis, resume: ResumeAnalysis) 
         missing_concepts=_concept_payloads(missing),
         jd_to_resume_matches=matches,
         confidence_factors=_confidence_factors(jd_chunks, resume_chunks, matches),
-        model_name=MODEL_NAME,
+        model_name=model_name,
         model_available=model_available,
     )
+
+
+def _should_use_hf_model() -> bool:
+    engine = os.getenv(SEMANTIC_ENGINE_ENV, "auto").strip().lower()
+    if engine in {"0", "false", "off", "fallback", "tfidf", "local"}:
+        return False
+    if engine in {"1", "true", "on", "hf", "huggingface", "sentence-transformer"}:
+        return True
+
+    if _is_render_runtime():
+        return False
+
+    memory_limit_mb = _memory_limit_mb()
+    if memory_limit_mb is not None and memory_limit_mb < MIN_HF_MEMORY_MB:
+        return False
+    return True
+
+
+def _is_render_runtime() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "RENDER",
+            "RENDER_SERVICE_ID",
+            "RENDER_SERVICE_NAME",
+            "RENDER_EXTERNAL_URL",
+        )
+    )
+
+
+def _memory_limit_mb() -> int | None:
+    """Best-effort Linux cgroup memory limit detection for hosted runtimes."""
+    for path in (
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ):
+        try:
+            raw_value = open(path, encoding="utf-8").read().strip()
+        except OSError:
+            continue
+        if not raw_value or raw_value == "max":
+            continue
+        try:
+            limit_bytes = int(raw_value)
+        except ValueError:
+            continue
+        if limit_bytes <= 0:
+            continue
+        # Some hosts expose a huge sentinel value when there is no real limit.
+        if limit_bytes > 10**15:
+            continue
+        return limit_bytes // (1024 * 1024)
+    return None
 
 
 def parse_job_requirements(job: JobDescriptionAnalysis) -> list[str]:
