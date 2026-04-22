@@ -377,5 +377,24 @@ Responsibilities:
         self.assertGreater(strong.score_breakdown.job_match["semantic_requirement_match"], skills_only.score_breakdown.job_match["semantic_requirement_match"])
         self.assertLess(skills_only.job_match_score, strong.job_match_score)
 
+    def test_specific_ai_tools_missing_are_not_credited_by_generic_backend_experience(self) -> None:
+        jd = """
+AI Engineer
+Required qualifications:
+- Experience with Python, LangChain, AutoGen, LlamaIndex, LangGraph, and Vector DB.
+Responsibilities:
+- Build agentic AI workflows and retrieval services for customer automation.
+""".strip()
+
+        result = analyze_resume(ATS_SAMPLE_CASES["backend_developer"]["resume"], jd, "AI Engineer")
+        missing_required = {item.keyword for item in result.missing_required_skills}
+
+        self.assertIn("LangChain", missing_required)
+        self.assertIn("AutoGen", missing_required)
+        self.assertIn("LlamaIndex", missing_required)
+        self.assertLess(result.score_breakdown.job_match["semantic_requirement_match"], 35)
+        self.assertTrue(all(not item["matched_resume_bullet"] for item in result.semantic_requirement_matches))
+        self.assertLess(result.job_match_score, 60)
+
 if __name__ == "__main__":
     unittest.main()

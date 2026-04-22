@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from ..ats_normalization import clean_phrase, dedupe_preserve_order, normalize_text, split_sentences, tokenize
+from ..ats_normalization import clean_phrase, dedupe_preserve_order, extract_known_terms, normalize_text, split_sentences, tokenize
 from ..job_description import JobDescriptionAnalysis
 from ..resume_parser import ResumeAnalysis
 
@@ -28,12 +28,17 @@ SECTION_WEIGHTS = {
 
 STRONG_MATCH_THRESHOLD = 0.80
 PARTIAL_MATCH_THRESHOLD = 0.65
+NO_EVIDENCE_REASON = "No relevant evidence found"
+NOT_APPLICABLE_REASON = "Not applicable for resume matching"
+MATCHABLE_JD_TYPES = {"skills", "responsibility", "tools/tech", "experience"}
 
 SKILL_ALIAS_MAP = {
     "rest api": ["fastapi", "django api", "backend api", "api development", "restful api", "rest apis"],
     "machine learning": ["ml", "scikit-learn", "sklearn", "pytorch", "tensorflow"],
     "database": ["postgresql", "postgres", "mysql", "sql", "database design"],
     "backend": ["fastapi", "django", "flask", "server-side", "backend api", "backend service"],
+    "agentic ai": ["langchain", "langgraph", "autogen", "auto gen", "llamaindex", "llama index", "ai agents"],
+    "vector database": ["vector db", "pinecone", "weaviate", "chroma", "faiss", "qdrant"],
 }
 
 EDUCATION_RELEVANCE_TERMS = {
@@ -56,6 +61,16 @@ class ResumeSemanticChunk:
     text: str
     section: str
     weighted_text: str
+
+
+@dataclass(frozen=True)
+class JDRequirementChunk:
+    text: str
+    jd_type: str
+
+    @property
+    def matchable(self) -> bool:
+        return self.jd_type in MATCHABLE_JD_TYPES
 
 
 @dataclass(frozen=True)
@@ -107,50 +122,43 @@ def get_semantic_model() -> Any:
 
 
 def compute_semantic_match(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> SemanticMatcherResult:
-    jd_chunks = parse_job_requirements(job)
+    jd_requirement_chunks = parse_job_requirement_chunks(job)
+    matchable_chunks = [chunk for chunk in jd_requirement_chunks if chunk.matchable]
     resume_chunks = parse_resume_chunks(job, resume)
-    if not jd_chunks or not resume_chunks:
-        return _empty_result(jd_chunks, resume_chunks)
+    if not jd_requirement_chunks or not resume_chunks:
+        return _empty_result(jd_requirement_chunks, resume_chunks)
 
     model_available = True
     model_name = MODEL_NAME
     try:
-        embeddings = _embed_texts([*jd_chunks, *[chunk.weighted_text for chunk in resume_chunks]])
+        embeddings = _embed_texts([*[chunk.text for chunk in matchable_chunks], *[chunk.weighted_text for chunk in resume_chunks]])
     except Exception:
         model_available = False
         model_name = FALLBACK_MODEL_NAME
-        embeddings = _fallback_embeddings([*jd_chunks, *[chunk.weighted_text for chunk in resume_chunks]])
+        embeddings = _fallback_embeddings([*[chunk.text for chunk in matchable_chunks], *[chunk.weighted_text for chunk in resume_chunks]])
 
-    jd_embeddings = embeddings[: len(jd_chunks)]
-    resume_embeddings = embeddings[len(jd_chunks) :]
+    jd_embeddings = embeddings[: len(matchable_chunks)]
+    resume_embeddings = embeddings[len(matchable_chunks) :]
     similarity_matrix = _cosine_similarity_matrix(jd_embeddings, resume_embeddings)
 
-    matches: list[dict[str, object]] = []
-    for jd_index, jd_text in enumerate(jd_chunks):
-        candidates: list[tuple[float, float, int, ResumeSemanticChunk]] = []
-        for resume_index, resume_chunk in enumerate(resume_chunks):
-            raw_similarity = float(similarity_matrix[jd_index][resume_index])
-            adjusted_similarity = _adjust_similarity(jd_text, resume_chunk, raw_similarity)
-            candidates.append((adjusted_similarity, SECTION_WEIGHTS.get(resume_chunk.section, 0.0), resume_index, resume_chunk))
-        adjusted_similarity, _, best_index, resume_chunk = max(candidates, key=lambda item: (item[0], item[1], -item[2]))
-        raw_similarity = float(similarity_matrix[jd_index][best_index])
-        band = _band_for_similarity(adjusted_similarity)
-        matches.append(
-            {
-                "jd_text": jd_text,
-                "best_resume_text": resume_chunk.text,
-                "resume_section": resume_chunk.section,
-                "similarity": round(adjusted_similarity, 4),
-                "raw_similarity": round(raw_similarity, 4),
-                "section_weight": SECTION_WEIGHTS.get(resume_chunk.section, 0.0),
-                "band": band,
-            }
-        )
+    scored_by_text: dict[str, dict[str, object]] = {}
+    for jd_index, jd_chunk in enumerate(matchable_chunks):
+        scored_by_text[jd_chunk.text] = _best_resume_match_payload(jd_chunk, resume_chunks, similarity_matrix[jd_index])
 
-    matched = [item for item in matches if item["band"] == "strong"]
-    partial = [item for item in matches if item["band"] == "partial"]
-    missing = [item for item in matches if item["band"] == "weak"]
-    semantic_coverage = round(100 * sum(float(item["similarity"]) for item in matches) / len(matches))
+    matches: list[dict[str, object]] = []
+    for jd_chunk in jd_requirement_chunks:
+        if not jd_chunk.matchable:
+            matches.append(_non_matchable_payload(jd_chunk))
+        else:
+            matches.append(scored_by_text.get(jd_chunk.text, _no_evidence_payload(jd_chunk, 0.0, 0.0)))
+
+    matched = [item for item in matches if item.get("matchable") and item["band"] == "strong"]
+    partial = [item for item in matches if item.get("matchable") and item["band"] == "partial"]
+    missing = [item for item in matches if item.get("matchable") and item["band"] == "weak"]
+    scored_matches = [item for item in matches if item.get("matchable")]
+    semantic_coverage = round(
+        sum(int(item.get("semantic_score", 0)) for item in scored_matches) / len(scored_matches)
+    ) if scored_matches else 0
 
     return SemanticMatcherResult(
         semantic_coverage=max(0, min(100, semantic_coverage)),
@@ -158,10 +166,89 @@ def compute_semantic_match(job: JobDescriptionAnalysis, resume: ResumeAnalysis) 
         partial_concepts=_concept_payloads(partial),
         missing_concepts=_concept_payloads(missing),
         jd_to_resume_matches=matches,
-        confidence_factors=_confidence_factors(jd_chunks, resume_chunks, matches),
+        confidence_factors=_confidence_factors(jd_requirement_chunks, resume_chunks, matches),
         model_name=model_name,
         model_available=model_available,
     )
+
+
+def _best_resume_match_payload(
+    jd_chunk: JDRequirementChunk,
+    resume_chunks: list[ResumeSemanticChunk],
+    similarities: Any,
+) -> dict[str, object]:
+    candidates: list[tuple[float, float, int, ResumeSemanticChunk]] = []
+    for resume_index, resume_chunk in enumerate(resume_chunks):
+        raw_similarity = float(similarities[resume_index])
+        adjusted_similarity = _adjust_similarity(jd_chunk.text, resume_chunk, raw_similarity)
+        candidates.append((adjusted_similarity, SECTION_WEIGHTS.get(resume_chunk.section, 0.0), resume_index, resume_chunk))
+    adjusted_similarity, _, best_index, resume_chunk = max(candidates, key=lambda item: (item[0], item[1], -item[2]))
+    raw_similarity = float(similarities[best_index])
+    band = _band_for_similarity(adjusted_similarity)
+    semantic_score = _score_for_similarity(adjusted_similarity)
+    if adjusted_similarity < PARTIAL_MATCH_THRESHOLD:
+        return _no_evidence_payload(jd_chunk, adjusted_similarity, raw_similarity)
+    return {
+        "jd_text": jd_chunk.text,
+        "jd_type": jd_chunk.jd_type,
+        "matchable": True,
+        "match": {
+            "text": resume_chunk.text,
+            "section": resume_chunk.section,
+            "similarity": round(adjusted_similarity, 4),
+            "band": band,
+        },
+        "best_resume_text": resume_chunk.text,
+        "resume_section": resume_chunk.section,
+        "similarity": round(adjusted_similarity, 4),
+        "raw_similarity": round(raw_similarity, 4),
+        "section_weight": SECTION_WEIGHTS.get(resume_chunk.section, 0.0),
+        "semantic_score": semantic_score,
+        "band": band,
+        "reason": None,
+    }
+
+
+def _non_matchable_payload(jd_chunk: JDRequirementChunk) -> dict[str, object]:
+    return {
+        "jd_text": jd_chunk.text,
+        "jd_type": jd_chunk.jd_type,
+        "matchable": False,
+        "match": None,
+        "best_resume_text": "",
+        "resume_section": "",
+        "similarity": 0.0,
+        "raw_similarity": 0.0,
+        "section_weight": 0.0,
+        "semantic_score": None,
+        "band": "not_applicable",
+        "reason": NOT_APPLICABLE_REASON,
+    }
+
+
+def _no_evidence_payload(jd_chunk: JDRequirementChunk, similarity: float, raw_similarity: float) -> dict[str, object]:
+    return {
+        "jd_text": jd_chunk.text,
+        "jd_type": jd_chunk.jd_type,
+        "matchable": True,
+        "match": None,
+        "best_resume_text": NO_EVIDENCE_REASON,
+        "resume_section": "",
+        "similarity": round(similarity, 4),
+        "raw_similarity": round(raw_similarity, 4),
+        "section_weight": 0.0,
+        "semantic_score": _score_for_similarity(similarity),
+        "band": "weak",
+        "reason": NO_EVIDENCE_REASON,
+    }
+
+
+def _score_for_similarity(similarity: float) -> int:
+    if similarity >= STRONG_MATCH_THRESHOLD:
+        return round(80 + ((similarity - STRONG_MATCH_THRESHOLD) / (1 - STRONG_MATCH_THRESHOLD)) * 20)
+    if similarity >= PARTIAL_MATCH_THRESHOLD:
+        return round(50 + ((similarity - PARTIAL_MATCH_THRESHOLD) / (STRONG_MATCH_THRESHOLD - PARTIAL_MATCH_THRESHOLD)) * 30)
+    return round(min(30.0, (similarity / PARTIAL_MATCH_THRESHOLD) * 30)) if similarity > 0 else 0
 
 
 def _should_use_hf_model() -> bool:
@@ -218,8 +305,12 @@ def _memory_limit_mb() -> int | None:
 
 
 def parse_job_requirements(job: JobDescriptionAnalysis) -> list[str]:
+    return [chunk.text for chunk in parse_job_requirement_chunks(job) if chunk.matchable]
+
+
+def parse_job_requirement_chunks(job: JobDescriptionAnalysis) -> list[JDRequirementChunk]:
     lines = [*getattr(job, "requirement_lines", []), *job.responsibility_phrases, *job.action_phrases]
-    requirements: list[str] = []
+    requirements: list[JDRequirementChunk] = []
     for line in lines:
         cleaned = clean_phrase(_strip_marker(line))
         if len(cleaned.split()) < 3:
@@ -227,11 +318,44 @@ def parse_job_requirements(job: JobDescriptionAnalysis) -> list[str]:
         for fragment in _split_requirement(cleaned):
             if _is_low_value_heading(fragment):
                 continue
-            requirements.append(fragment)
+            jd_type = classify_jd_line(fragment)
+            if jd_type == "tools/tech":
+                requirements.extend(_tool_chunks(fragment, jd_type))
+            else:
+                requirements.append(JDRequirementChunk(text=fragment, jd_type=jd_type))
 
     if not requirements:
-        requirements = [f"Experience with {term}" for term in dedupe_preserve_order([*job.required_skills, *job.tools])[:10]]
-    return dedupe_preserve_order(requirements)[:16]
+        requirements = [
+            JDRequirementChunk(text=f"Experience with {term}", jd_type="tools/tech")
+            for term in dedupe_preserve_order([*job.required_skills, *job.tools])[:10]
+        ]
+    return _dedupe_requirement_chunks(requirements)[:18]
+
+
+def classify_jd_line(text: str) -> str:
+    lowered = normalize_text(text)
+    known_terms = extract_known_terms(text, categories={"hard_skill", "soft_skill"})
+    if _line_matches_any(lowered, ("notice period", "immediate joiner", "joiners required", "days joiner", "days joiners", "serving notice")):
+        return "notice_period"
+    if _line_matches_any(lowered, ("job location", "location:", "located in", "based in", "relocation")):
+        return "location"
+    if _line_matches_any(lowered, ("work mode", "hybrid", "remote", "onsite", "on-site", "work from office", "wfo")):
+        return "work_mode"
+    if _line_matches_any(lowered, ("degree", "bachelor", "master", "phd", "b.tech", "m.tech", "certification", "license")):
+        return "education"
+    if _line_matches_any(lowered, ("about us", "about the company", "benefits", "salary", "equal opportunity", "company overview")):
+        return "other"
+    if re.search(r"\b\d+\s*(?:\+|plus)?\s*(?:years?|yrs?)\b", lowered) or lowered.startswith(("exp:", "experience:")):
+        return "experience"
+    if _normalized_action_word(lowered):
+        return "responsibility"
+    if known_terms and _line_matches_any(lowered, ("technical skill", "tech stack", "tools", "technologies", "mandatory skill", "skills:", "skill:")):
+        return "tools/tech"
+    if known_terms:
+        return "skills"
+    if _line_matches_any(lowered, ("responsibilities", "what you will do", "what you ll do", "you will")):
+        return "responsibility"
+    return "other"
 
 
 def parse_resume_chunks(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> list[ResumeSemanticChunk]:
@@ -309,6 +433,10 @@ def _adjust_similarity(jd_text: str, resume_chunk: ResumeSemanticChunk, raw_simi
     section_weight = SECTION_WEIGHTS.get(resume_chunk.section, 0.0)
     concept_overlap = _concept_overlap(jd_text, resume_chunk.text)
     alias_overlap = _alias_overlap(jd_text, resume_chunk.text)
+    action_overlap = bool(_normalized_action_word(jd_text) and _normalized_action_word(resume_chunk.text))
+    jd_tools = _known_terms(jd_text)
+    resume_tools = _known_terms(resume_chunk.text)
+    tool_matches = [tool for tool in jd_tools if tool in resume_tools]
 
     adjusted = raw_similarity + (section_weight * 0.12)
     if concept_overlap or alias_overlap:
@@ -318,6 +446,18 @@ def _adjust_similarity(jd_text: str, resume_chunk: ResumeSemanticChunk, raw_simi
             adjusted += 0.04
         elif resume_chunk.section == "summary":
             adjusted += 0.01
+    if jd_tools:
+        if not tool_matches:
+            adjusted = min(adjusted * 0.45, 0.55)
+        else:
+            coverage = len(tool_matches) / len(jd_tools)
+            adjusted += 0.05 * coverage
+            if coverage < 1:
+                adjusted -= 0.12 * (1 - coverage)
+            if coverage >= 0.5 and resume_chunk.section in {"experience", "projects", "skills"}:
+                adjusted = max(adjusted, PARTIAL_MATCH_THRESHOLD)
+    if not (concept_overlap or alias_overlap or action_overlap or tool_matches):
+        adjusted = min(adjusted, PARTIAL_MATCH_THRESHOLD - 0.01)
     if resume_chunk.section == "summary" and not concept_overlap and not alias_overlap:
         adjusted -= 0.06
     return max(0.0, min(1.0, adjusted))
@@ -335,26 +475,36 @@ def _concept_payloads(matches: list[dict[str, object]]) -> list[dict[str, object
     return [
         {
             "jd_text": item["jd_text"],
+            "jd_type": item.get("jd_type", ""),
             "best_resume_text": item["best_resume_text"],
             "resume_section": item["resume_section"],
             "similarity": item["similarity"],
+            "semantic_score": item.get("semantic_score", 0),
             "band": item["band"],
+            "match": item.get("match"),
+            "reason": item.get("reason"),
         }
         for item in matches
     ]
 
 
 def _confidence_factors(
-    jd_chunks: list[str],
+    jd_chunks: list[JDRequirementChunk],
     resume_chunks: list[ResumeSemanticChunk],
     matches: list[dict[str, object]],
 ) -> dict[str, float]:
-    jd_parse_quality = min(1.0, 0.35 + len(jd_chunks) * 0.08)
+    matchable_count = sum(1 for chunk in jd_chunks if chunk.matchable)
+    jd_parse_quality = min(1.0, 0.35 + matchable_count * 0.08)
     section_count = len({chunk.section for chunk in resume_chunks})
     evidence_sections = {str(item["resume_section"]) for item in matches if item["band"] in {"strong", "partial"}}
     resume_parse_quality = min(1.0, 0.30 + section_count * 0.12 + min(len(resume_chunks), 12) * 0.025)
     evidence_coverage = len(evidence_sections & {"experience", "projects", "skills"}) / 3
-    semantic_coverage = sum(float(item["similarity"]) for item in matches) / len(matches) if matches else 0.0
+    scored_matches = [item for item in matches if item.get("matchable")]
+    semantic_coverage = (
+        sum(int(item.get("semantic_score", 0)) for item in scored_matches) / (len(scored_matches) * 100)
+        if scored_matches
+        else 0.0
+    )
     return {
         "jd_parse_quality": round(jd_parse_quality, 2),
         "resume_parse_quality": round(resume_parse_quality, 2),
@@ -363,13 +513,14 @@ def _confidence_factors(
     }
 
 
-def _empty_result(jd_chunks: list[str], resume_chunks: list[ResumeSemanticChunk]) -> SemanticMatcherResult:
+def _empty_result(jd_chunks: list[JDRequirementChunk], resume_chunks: list[ResumeSemanticChunk]) -> SemanticMatcherResult:
+    non_matchable_matches = [_non_matchable_payload(chunk) for chunk in jd_chunks if not chunk.matchable]
     return SemanticMatcherResult(
         semantic_coverage=0,
         matched_concepts=[],
         partial_concepts=[],
         missing_concepts=[],
-        jd_to_resume_matches=[],
+        jd_to_resume_matches=non_matchable_matches,
         confidence_factors={
             "jd_parse_quality": 0.0 if not jd_chunks else 0.4,
             "resume_parse_quality": 0.0 if not resume_chunks else 0.4,
@@ -407,6 +558,29 @@ def _concept_tokens(text: str) -> list[str]:
     return [token for token in tokenize(_expand_aliases(text)) if len(token) > 2]
 
 
+def _known_terms(text: str) -> list[str]:
+    return extract_known_terms(_expand_aliases(text), categories={"hard_skill", "soft_skill"})
+
+
+def _tool_chunks(text: str, jd_type: str) -> list[JDRequirementChunk]:
+    tools = _known_terms(text)
+    if len(tools) < 2:
+        return [JDRequirementChunk(text=text, jd_type=jd_type)]
+    return [JDRequirementChunk(text=f"Experience with {tool}", jd_type=jd_type) for tool in tools]
+
+
+def _dedupe_requirement_chunks(chunks: list[JDRequirementChunk]) -> list[JDRequirementChunk]:
+    seen: set[tuple[str, str]] = set()
+    output: list[JDRequirementChunk] = []
+    for chunk in chunks:
+        key = (normalize_text(chunk.text), chunk.jd_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(chunk)
+    return output
+
+
 def _split_requirement(line: str) -> list[str]:
     fragments = split_sentences(line) or [line]
     output: list[str] = []
@@ -418,6 +592,26 @@ def _split_requirement(line: str) -> list[str]:
         )
         output.extend(clean_phrase(piece) for piece in pieces if len(clean_phrase(piece).split()) >= 3)
     return output
+
+
+def _line_matches_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _normalized_action_word(text: str) -> str | None:
+    tokens = set(tokenize(text))
+    action_groups = {
+        "analyze": {"analyze", "analysis", "evaluate", "interpret", "measure", "research"},
+        "build": {"build", "built", "develop", "deliver", "implement", "create", "ship", "launch"},
+        "collaborate": {"collaborate", "partner", "communicate", "coordinate", "align", "work"},
+        "deploy": {"deploy", "release", "publish", "containerize"},
+        "lead": {"lead", "own", "manage", "mentor", "drive"},
+        "optimize": {"optimize", "optimise", "improve", "tune", "reduce", "increase", "scale", "enhance"},
+    }
+    for canonical, aliases in action_groups.items():
+        if canonical in tokens or aliases & tokens:
+            return canonical
+    return None
 
 
 def _strip_marker(text: str) -> str:

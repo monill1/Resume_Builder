@@ -17,7 +17,12 @@ from .ats_normalization import (
 )
 from .job_description import JobDescriptionAnalysis
 from .resume_parser import ResumeAnalysis
-from .services.semantic_matcher import SemanticMatcherResult, compute_semantic_match
+from .services.semantic_matcher import (
+    NO_EVIDENCE_REASON,
+    SemanticMatcherResult,
+    classify_jd_line,
+    compute_semantic_match,
+)
 
 
 ACTION_ALIASES = {
@@ -55,6 +60,9 @@ class SemanticRequirementMatch:
     semantic_score: int
     match_strength: str
     matched_signals: list[str]
+    jd_type: str = "other"
+    match_applicable: bool = True
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +122,8 @@ def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnaly
     unmatched: list[dict[str, object]] = []
     for match in requirement_matches:
         payload = _requirement_payload(match)
+        if not match.match_applicable:
+            continue
         if match.semantic_score >= 80:
             matched_requirements.append(payload)
         elif match.semantic_score >= 65:
@@ -137,13 +147,14 @@ def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnaly
                 }
             )
 
-    semantic_score = embedding_report.semantic_coverage if embedding_report.jd_to_resume_matches else _average_requirement_score(requirement_matches)
+    applicable_requirement_matches = [match for match in requirement_matches if match.match_applicable]
+    semantic_score = embedding_report.semantic_coverage if applicable_requirement_matches else _average_requirement_score(requirement_matches)
     responsibility_score = _average_responsibility_score(responsibility_matches)
-    strong_count = sum(1 for match in requirement_matches if match.semantic_score >= 80)
+    strong_count = sum(1 for match in applicable_requirement_matches if match.semantic_score >= 80)
     semantic_coverage = round(
         semantic_score / 100,
         2,
-    ) if requirement_matches else 0.0
+    ) if applicable_requirement_matches else 0.0
 
     return SemanticMatchResult(
         requirement_matches=requirement_matches,
@@ -173,6 +184,8 @@ def extract_requirement_lines(job: JobDescriptionAnalysis) -> list[str]:
         line = clean_phrase(_strip_leading_marker(line))
         lowered = normalize_text(line)
         if len(line.split()) < 3:
+            continue
+        if classify_jd_line(line) not in {"skills", "responsibility", "tools/tech", "experience"}:
             continue
         if any(marker in lowered for marker in ("degree", "bachelor", "master", "phd", "certification", "license", "authorized to work", "visa", "sponsorship")):
             continue
@@ -229,6 +242,8 @@ def _best_requirement_match(requirement: str, bullets: list[dict[str, str]]) -> 
             semantic_score=0,
             match_strength="missing",
             matched_signals=[],
+            jd_type=classify_jd_line(requirement),
+            reason=NO_EVIDENCE_REASON,
         )
     scored = [_score_requirement_pair(requirement, bullet["text"], bullet["section"], [requirement, *[item["text"] for item in bullets]]) for bullet in bullets]
     return max(scored, key=lambda item: item.semantic_score)
@@ -291,6 +306,8 @@ def _score_requirement_pair(requirement: str, bullet: str, section: str, corpus:
         semantic_score=score,
         match_strength=_strength_label(score),
         matched_signals=dedupe_preserve_order(signals),
+        jd_type=classify_jd_line(requirement),
+        reason=None if score >= 65 else NO_EVIDENCE_REASON,
     )
 
 
@@ -524,8 +541,9 @@ def _related_actions(left: str, right: str) -> bool:
 
 
 def _average_requirement_score(matches: list[SemanticRequirementMatch]) -> int:
+    matches = [match for match in matches if match.match_applicable]
     if not matches:
-        return 55
+        return 0
     weighted = 0.0
     for match in matches:
         if match.match_strength == "strong":
@@ -552,14 +570,27 @@ def _strength_label(score: int) -> str:
 
 
 def _requirement_payload(match: SemanticRequirementMatch) -> dict[str, object]:
+    has_evidence = match.match_applicable and match.semantic_score >= 65 and bool(match.matched_resume_bullet)
     return {
         "job_requirement": match.job_requirement,
-        "matched_resume_bullet": match.matched_resume_bullet,
-        "resume_section": match.resume_section,
+        "jd_type": match.jd_type,
+        "matched_resume_bullet": match.matched_resume_bullet if has_evidence else "",
+        "resume_section": match.resume_section if has_evidence else "",
         "semantic_score": match.semantic_score,
         "match_strength": match.match_strength,
         "band": "weak" if match.match_strength == "missing" else match.match_strength,
         "matched_signals": match.matched_signals,
+        "match": (
+            {
+                "text": match.matched_resume_bullet,
+                "section": match.resume_section,
+                "score": match.semantic_score,
+                "band": match.match_strength,
+            }
+            if has_evidence
+            else None
+        ),
+        "reason": match.reason or (None if has_evidence else NO_EVIDENCE_REASON),
     }
 
 
@@ -579,16 +610,22 @@ def _responsibility_payload(match: ResponsibilityMatch) -> dict[str, object]:
 def _embedding_requirement_matches(report: SemanticMatcherResult) -> list[SemanticRequirementMatch]:
     matches: list[SemanticRequirementMatch] = []
     for item in report.jd_to_resume_matches:
-        score = round(float(item.get("similarity", 0.0)) * 100)
+        matchable = bool(item.get("matchable", True))
+        score_value = item.get("semantic_score")
+        score = int(score_value) if isinstance(score_value, int) else round(float(item.get("similarity", 0.0)) * 100)
         band = str(item.get("band", "weak"))
+        has_evidence = matchable and score >= 65 and bool(item.get("match"))
         matches.append(
             SemanticRequirementMatch(
                 job_requirement=str(item.get("jd_text", "")),
-                matched_resume_bullet=str(item.get("best_resume_text", "")),
-                resume_section=str(item.get("resume_section", "")),
+                matched_resume_bullet=str(item.get("best_resume_text", "")) if has_evidence else "",
+                resume_section=str(item.get("resume_section", "")) if has_evidence else "",
                 semantic_score=score,
-                match_strength="missing" if band == "weak" else band,
+                match_strength="not_applicable" if not matchable else "missing" if band == "weak" else band,
                 matched_signals=["sentence_embedding", f"model:{report.model_name}"],
+                jd_type=str(item.get("jd_type", "other")),
+                match_applicable=matchable,
+                reason=str(item.get("reason") or "") or (None if has_evidence else NO_EVIDENCE_REASON),
             )
         )
     return matches

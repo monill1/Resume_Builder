@@ -500,17 +500,30 @@ def _semantic_critical_gaps(semantic_match: SemanticMatchResult) -> list[dict[st
 
 
 def _semantic_match_payload(match) -> dict[str, object]:
+    has_evidence = match.match_applicable and match.semantic_score >= 65 and bool(match.matched_resume_bullet)
     return {
         "job_requirement": match.job_requirement,
         "jd_text": match.job_requirement,
-        "matched_resume_bullet": match.matched_resume_bullet,
-        "best_resume_text": match.matched_resume_bullet,
-        "resume_section": match.resume_section,
+        "jd_type": match.jd_type,
+        "matched_resume_bullet": match.matched_resume_bullet if has_evidence else "",
+        "best_resume_text": match.matched_resume_bullet if has_evidence else ("No relevant evidence found" if match.match_applicable else ""),
+        "resume_section": match.resume_section if has_evidence else "",
         "semantic_score": match.semantic_score,
         "similarity": round(match.semantic_score / 100, 4),
         "match_strength": match.match_strength,
         "band": "weak" if match.match_strength == "missing" else match.match_strength,
         "matched_signals": match.matched_signals,
+        "match": (
+            {
+                "text": match.matched_resume_bullet,
+                "section": match.resume_section,
+                "score": match.semantic_score,
+                "band": match.match_strength,
+            }
+            if has_evidence
+            else None
+        ),
+        "reason": match.reason or (None if has_evidence else "No relevant evidence found"),
     }
 
 
