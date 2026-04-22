@@ -437,6 +437,12 @@ class ATSAnalysisResponse(BaseModel):
     matched_responsibilities: List[Dict[str, Any]] = Field(default_factory=list)
     missing_responsibilities: List[Dict[str, Any]] = Field(default_factory=list)
     semantic_requirement_matches: List[Dict[str, Any]] = Field(default_factory=list)
+    semantic_coverage: int = Field(default=0, ge=0, le=100)
+    matched_concepts: List[Dict[str, Any]] = Field(default_factory=list)
+    partial_concepts: List[Dict[str, Any]] = Field(default_factory=list)
+    missing_concepts: List[Dict[str, Any]] = Field(default_factory=list)
+    semantic_model_name: str = ""
+    semantic_model_available: bool = False
     responsibility_match_score: int = Field(default=0, ge=0, le=100)
     summary: str
     section_scores: ATSSectionScores

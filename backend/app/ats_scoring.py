@@ -118,6 +118,12 @@ def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> dict[st
         "matched_responsibilities": semantic_match.matched_responsibilities,
         "missing_responsibilities": semantic_match.missing_responsibilities,
         "semantic_requirement_matches": [_semantic_match_payload(match) for match in semantic_match.requirement_matches[:14]],
+        "semantic_coverage": semantic_match.semantic_requirement_match_score,
+        "matched_concepts": semantic_match.matched_concepts,
+        "partial_concepts": semantic_match.partial_concepts,
+        "missing_concepts": semantic_match.missing_concepts,
+        "semantic_model_name": semantic_match.semantic_model_name,
+        "semantic_model_available": semantic_match.semantic_model_available,
         "responsibility_match_score": semantic_match.responsibility_match_score,
         "summary": explanation_panel["summary"],
         "section_scores": section_scores,
@@ -496,10 +502,14 @@ def _semantic_critical_gaps(semantic_match: SemanticMatchResult) -> list[dict[st
 def _semantic_match_payload(match) -> dict[str, object]:
     return {
         "job_requirement": match.job_requirement,
+        "jd_text": match.job_requirement,
         "matched_resume_bullet": match.matched_resume_bullet,
+        "best_resume_text": match.matched_resume_bullet,
         "resume_section": match.resume_section,
         "semantic_score": match.semantic_score,
+        "similarity": round(match.semantic_score / 100, 4),
         "match_strength": match.match_strength,
+        "band": "weak" if match.match_strength == "missing" else match.match_strength,
         "matched_signals": match.matched_signals,
     }
 
@@ -622,13 +632,17 @@ def _confidence_score(
         if relevant_terms
         else 0.45
     )
-    semantic_coverage = 0.60 * semantic_match.semantic_coverage + 0.40 * (semantic_match.semantic_requirement_match_score / 100)
+    matcher_factors = semantic_match.confidence_factors
+    semantic_coverage = matcher_factors.get(
+        "semantic_coverage",
+        0.60 * semantic_match.semantic_coverage + 0.40 * (semantic_match.semantic_requirement_match_score / 100),
+    )
     signal_density = min(1.0, (required_signal_count + resume_bullet_count + strong_evidence_count) / 24)
 
     factors = {
-        "jd_parse_quality": round(max(0.0, min(1.0, jd_parse_quality)), 2),
-        "resume_parse_quality": round(max(0.0, min(1.0, resume_parse_quality)), 2),
-        "evidence_coverage": round(max(0.0, min(1.0, evidence_coverage)), 2),
+        "jd_parse_quality": round(max(0.0, min(1.0, matcher_factors.get("jd_parse_quality", jd_parse_quality))), 2),
+        "resume_parse_quality": round(max(0.0, min(1.0, matcher_factors.get("resume_parse_quality", resume_parse_quality))), 2),
+        "evidence_coverage": round(max(0.0, min(1.0, max(evidence_coverage, matcher_factors.get("evidence_coverage", 0.0)))), 2),
         "semantic_coverage": round(max(0.0, min(1.0, semantic_coverage)), 2),
         "signal_density": round(max(0.0, min(1.0, signal_density)), 2),
     }

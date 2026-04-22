@@ -73,6 +73,7 @@ from .models import (
 )
 from .pdf_generator import build_resume_pdf
 from .sample_data import SAMPLE_RESUME
+from .services.semantic_matcher import warm_semantic_model
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,10 @@ def startup() -> None:
         logger.warning("Database initialization skipped: %s", exc)
     except Exception as exc:
         logger.warning("Database initialization failed: %s", exc)
+    try:
+        warm_semantic_model()
+    except Exception as exc:
+        logger.warning("Semantic matcher model preload skipped: %s", exc)
 
 
 @app.get("/api/health")

@@ -17,6 +17,7 @@ from .ats_normalization import (
 )
 from .job_description import JobDescriptionAnalysis
 from .resume_parser import ResumeAnalysis
+from .services.semantic_matcher import SemanticMatcherResult, compute_semantic_match
 
 
 ACTION_ALIASES = {
@@ -83,6 +84,12 @@ class SemanticMatchResult:
     matched_requirements: list[dict[str, object]]
     weakly_matched_requirements: list[dict[str, object]]
     unmatched_requirements: list[dict[str, object]]
+    matched_concepts: list[dict[str, object]]
+    partial_concepts: list[dict[str, object]]
+    missing_concepts: list[dict[str, object]]
+    confidence_factors: dict[str, float]
+    semantic_model_name: str
+    semantic_model_available: bool
     responsibility_phrases: list[ResponsibilityPhrase]
     matched_responsibilities: list[dict[str, object]]
     missing_responsibilities: list[dict[str, object]]
@@ -93,9 +100,12 @@ class SemanticMatchResult:
 
 
 def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> SemanticMatchResult:
+    embedding_report = compute_semantic_match(job, resume)
     requirements = extract_requirement_lines(job)
     resume_bullets = extract_resume_bullets(resume)
-    requirement_matches = [_best_requirement_match(requirement, resume_bullets) for requirement in requirements]
+    requirement_matches = _embedding_requirement_matches(embedding_report)
+    if not requirement_matches:
+        requirement_matches = [_best_requirement_match(requirement, resume_bullets) for requirement in requirements]
     responsibility_phrases = extract_responsibility_phrases(job)
     responsibility_matches = [_best_responsibility_match(phrase, resume_bullets) for phrase in responsibility_phrases]
 
@@ -104,9 +114,9 @@ def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnaly
     unmatched: list[dict[str, object]] = []
     for match in requirement_matches:
         payload = _requirement_payload(match)
-        if match.semantic_score >= 66:
+        if match.semantic_score >= 80:
             matched_requirements.append(payload)
-        elif match.semantic_score >= 44:
+        elif match.semantic_score >= 65:
             weakly_matched.append(payload)
         else:
             unmatched.append(payload)
@@ -127,11 +137,11 @@ def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnaly
                 }
             )
 
-    semantic_score = _average_requirement_score(requirement_matches)
+    semantic_score = embedding_report.semantic_coverage if embedding_report.jd_to_resume_matches else _average_requirement_score(requirement_matches)
     responsibility_score = _average_responsibility_score(responsibility_matches)
-    strong_count = sum(1 for match in requirement_matches if match.semantic_score >= 70)
+    strong_count = sum(1 for match in requirement_matches if match.semantic_score >= 80)
     semantic_coverage = round(
-        sum(1 for match in requirement_matches if match.semantic_score >= 55) / len(requirement_matches),
+        semantic_score / 100,
         2,
     ) if requirement_matches else 0.0
 
@@ -140,6 +150,12 @@ def match_semantic_requirements(job: JobDescriptionAnalysis, resume: ResumeAnaly
         matched_requirements=matched_requirements[:12],
         weakly_matched_requirements=weakly_matched[:12],
         unmatched_requirements=unmatched[:12],
+        matched_concepts=embedding_report.matched_concepts,
+        partial_concepts=embedding_report.partial_concepts,
+        missing_concepts=embedding_report.missing_concepts,
+        confidence_factors=embedding_report.confidence_factors,
+        semantic_model_name=embedding_report.model_name,
+        semantic_model_available=embedding_report.model_available,
         responsibility_phrases=responsibility_phrases,
         matched_responsibilities=matched_responsibilities[:12],
         missing_responsibilities=missing_responsibilities[:12],
@@ -528,9 +544,9 @@ def _average_responsibility_score(matches: list[ResponsibilityMatch]) -> int:
 
 
 def _strength_label(score: int) -> str:
-    if score >= 66:
+    if score >= 80:
         return "strong"
-    if score >= 44:
+    if score >= 65:
         return "partial"
     return "missing"
 
@@ -542,6 +558,7 @@ def _requirement_payload(match: SemanticRequirementMatch) -> dict[str, object]:
         "resume_section": match.resume_section,
         "semantic_score": match.semantic_score,
         "match_strength": match.match_strength,
+        "band": "weak" if match.match_strength == "missing" else match.match_strength,
         "matched_signals": match.matched_signals,
     }
 
@@ -557,6 +574,24 @@ def _responsibility_payload(match: ResponsibilityMatch) -> dict[str, object]:
         "tool_matches": match.tool_matches,
         "outcome_match": match.outcome_match,
     }
+
+
+def _embedding_requirement_matches(report: SemanticMatcherResult) -> list[SemanticRequirementMatch]:
+    matches: list[SemanticRequirementMatch] = []
+    for item in report.jd_to_resume_matches:
+        score = round(float(item.get("similarity", 0.0)) * 100)
+        band = str(item.get("band", "weak"))
+        matches.append(
+            SemanticRequirementMatch(
+                job_requirement=str(item.get("jd_text", "")),
+                matched_resume_bullet=str(item.get("best_resume_text", "")),
+                resume_section=str(item.get("resume_section", "")),
+                semantic_score=score,
+                match_strength="missing" if band == "weak" else band,
+                matched_signals=["sentence_embedding", f"model:{report.model_name}"],
+            )
+        )
+    return matches
 
 
 def _split_atomic_line(line: str) -> list[str]:
