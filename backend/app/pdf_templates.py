@@ -1159,6 +1159,241 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     return buffer.getvalue()
 
 
+def _profile_banner_initials(full_name: str) -> str:
+    parts = [part for part in re.split(r"\s+", full_name.strip()) if part]
+    initials = "".join(part[0].upper() for part in parts[:2])
+    return initials or "CV"
+
+
+def _profile_banner_sidebar_education_block(item, styles) -> list:
+    blocks = []
+    if item.degree.strip():
+        blocks.append(Paragraph(escape(item.degree), styles["SidebarBodyBold"]))
+    if item.institution.strip():
+        blocks.append(Paragraph(escape(item.institution), styles["SidebarBody"]))
+    for line in [item.location or "", item.duration or "", item.score or ""]:
+        if str(line).strip():
+            blocks.append(Paragraph(escape(str(line).strip()), styles["SidebarMeta"]))
+    blocks.append(Spacer(1, 6))
+    return blocks
+
+
+def _profile_banner_sidebar_skill_rows(resume: ResumePayload, styles) -> list:
+    rows = []
+    for item in resume.skills:
+        skill_items = _safe_items(item.items) or ([item.name.strip()] if item.name.strip() else [])
+        for skill in skill_items:
+            rows.append(Paragraph(escape(skill), styles["SidebarBullet"], bulletText="\u2022"))
+    return rows
+
+
+def _build_profile_banner_sidebar_story(resume: ResumePayload, sidebar_width: float, styles, config: dict) -> list:
+    story = []
+    sidebar_config = {
+        **config,
+        "section_variant": "stacked",
+        "section_title_style": "SidebarTitle",
+        "uppercase_sections": True,
+        "section_gap_after_header": 7,
+        "section_gap_after": 12,
+        "section_titles_without_rule": ["Personal Information", "Education", "Key Skills"],
+    }
+    _append_section(
+        story,
+        "Personal Information",
+        [ContactStackFlowable(resume, sidebar_width, config["accent"])],
+        sidebar_width,
+        styles,
+        sidebar_config,
+    )
+
+    if resume.education:
+        _append_section(
+            story,
+            "Education",
+            [_profile_banner_sidebar_education_block(item, styles) for item in resume.education],
+            sidebar_width,
+            styles,
+            sidebar_config,
+        )
+
+    if resume.skills:
+        _append_section(story, "Key Skills", _profile_banner_sidebar_skill_rows(resume, styles), sidebar_width, styles, sidebar_config)
+
+    return story
+
+
+def _draw_profile_banner_header(canvas, doc, resume: ResumePayload, styles, config: dict) -> None:
+    page_width, page_height = letter
+    banner_height = config.get("banner_height", 2.05) * inch
+    banner_y = page_height - banner_height
+    accent = config["accent"]
+
+    canvas.saveState()
+    canvas.setFillColor(accent)
+    canvas.rect(0, banner_y, page_width, banner_height, fill=1, stroke=0)
+
+    avatar_radius = config.get("avatar_radius", 0.68) * inch
+    avatar_x = doc.leftMargin + avatar_radius + 0.02 * inch
+    avatar_y = banner_y + (banner_height / 2)
+    canvas.setFillColor(config.get("avatar_bg", colors.white))
+    canvas.setStrokeColor(colors.white)
+    canvas.setLineWidth(5)
+    canvas.circle(avatar_x, avatar_y, avatar_radius, fill=1, stroke=1)
+    canvas.setFillColor(config.get("avatar_text", accent))
+    canvas.setFont("Helvetica-Bold", 25)
+    canvas.drawCentredString(avatar_x, avatar_y - 8, _profile_banner_initials(resume.basics.full_name))
+    canvas.restoreState()
+
+    text_x = avatar_x + avatar_radius + 0.4 * inch
+    text_width = page_width - text_x - doc.rightMargin
+    text_frame = Frame(
+        text_x,
+        banner_y + 0.25 * inch,
+        text_width,
+        banner_height - 0.5 * inch,
+        leftPadding=0,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        id="profile-banner-header",
+    )
+    header_story = [Paragraph(escape(resume.basics.full_name), styles["BannerName"])]
+    if resume.basics.headline.strip():
+        header_story.extend([Spacer(1, 7), Paragraph(escape(resume.basics.headline), styles["BannerHeadline"])])
+    if resume.basics.summary.strip():
+        header_story.extend(
+            [
+                Spacer(1, 8),
+                Paragraph(
+                    to_reportlab_markup(_normalize_inline_paragraph_text(resume.basics.summary), bold_font_name=styles["BannerSummary"].fontName),
+                    styles["BannerSummary"],
+                ),
+            ]
+        )
+    text_frame.addFromList(header_story, canvas)
+
+
+def _build_profile_banner_pdf(resume: ResumePayload, config: dict) -> bytes:
+    buffer = BytesIO()
+    doc = BaseDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=config.get("left_margin", 0.34) * inch,
+        rightMargin=config.get("right_margin", 0.34) * inch,
+        topMargin=config.get("top_margin", 0.0) * inch,
+        bottomMargin=config.get("bottom_margin", 0.28) * inch,
+        title=f"{resume.basics.full_name} Resume",
+        author=resume.basics.full_name,
+    )
+    styles = _build_styles(config)
+    styles.add(
+        ParagraphStyle(
+            name="BannerName",
+            fontName="Helvetica-Bold",
+            fontSize=31,
+            leading=34,
+            alignment=TA_CENTER,
+            textColor=colors.white,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="BannerHeadline",
+            fontName="Helvetica-Bold",
+            fontSize=10.5,
+            leading=13,
+            alignment=TA_CENTER,
+            textColor=colors.white,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="BannerSummary",
+            fontName="Helvetica",
+            fontSize=9.2,
+            leading=11.8,
+            alignment=TA_CENTER,
+            textColor=colors.white,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarBullet",
+            parent=styles["SidebarBody"],
+            leftIndent=12,
+            bulletIndent=1,
+            spaceAfter=3.4,
+        )
+    )
+
+    banner_height = config.get("banner_height", 2.05) * inch
+    sidebar_width = config.get("sidebar_width", 2.18) * inch
+    column_gap = config.get("column_gap", 0.26) * inch
+    first_body_height = letter[1] - doc.topMargin - doc.bottomMargin - banner_height
+    first_main = Frame(
+        doc.leftMargin + sidebar_width + column_gap,
+        doc.bottomMargin,
+        doc.width - sidebar_width - column_gap,
+        first_body_height,
+        leftPadding=0,
+        rightPadding=0,
+        topPadding=18,
+        bottomPadding=0,
+        id="profile-banner-main",
+    )
+    later_main = Frame(
+        doc.leftMargin + sidebar_width + column_gap,
+        doc.bottomMargin,
+        doc.width - sidebar_width - column_gap,
+        doc.height,
+        leftPadding=0,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        id="profile-banner-later",
+    )
+
+    def draw_sidebar_panel(canvas, _doc, height: float) -> None:
+        canvas.saveState()
+        canvas.setFillColor(config.get("sidebar_bg", colors.HexColor("#F3F3F4")))
+        canvas.rect(_doc.leftMargin - 4, _doc.bottomMargin, sidebar_width + 8, height, fill=1, stroke=0)
+        canvas.restoreState()
+
+    def draw_first_page(canvas, _doc) -> None:
+        _draw_profile_banner_header(canvas, _doc, resume, styles, config)
+        draw_sidebar_panel(canvas, _doc, first_body_height)
+        sidebar_frame = Frame(
+            _doc.leftMargin,
+            _doc.bottomMargin,
+            sidebar_width,
+            first_body_height,
+            leftPadding=0,
+            rightPadding=0,
+            topPadding=18,
+            bottomPadding=0,
+            id="profile-banner-sidebar",
+        )
+        sidebar_frame.addFromList(_build_profile_banner_sidebar_story(resume, sidebar_width, styles, config), canvas)
+
+    def draw_later_page(canvas, _doc) -> None:
+        draw_sidebar_panel(canvas, _doc, _doc.height)
+
+    doc.addPageTemplates(
+        [
+            PageTemplate(id="first", frames=[first_main], onPage=draw_first_page),
+            PageTemplate(id="later", frames=[later_main], onPage=draw_later_page),
+        ]
+    )
+
+    main_story = [NextPageTemplate("later")]
+    main_keys = [key for key in _normalized_section_order(getattr(resume, "section_order", None)) if key not in ["summary", "skills", "education"]]
+    _build_ordered_story(main_story, resume, doc.width - sidebar_width - column_gap, styles, config, main_keys)
+
+    doc.build(main_story)
+    return buffer.getvalue()
+
+
 def build_additional_template_pdf(resume: ResumePayload, template_id: str, section_color: str | None = None) -> bytes:
     override_palette = build_theme_palette(section_color) if section_color else None
 
@@ -1283,6 +1518,58 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str, secti
                     "Projects": 99,
                 },
                 "section_title_overrides": {"summary": "Professional Summary"},
+            },
+        )
+
+    if template_id == "profile-banner":
+        return _build_profile_banner_pdf(
+            resume,
+            {
+                "accent": override_palette["accent"] if override_palette else colors.HexColor("#DC5B60"),
+                "avatar_text": override_palette["accent_deep"] if override_palette else colors.HexColor("#B13F45"),
+                "name_font": "Helvetica-Bold",
+                "name_size": 22,
+                "headline_size": 9.8,
+                "section_text": colors.HexColor("#1E5967"),
+                "sidebar_title_color": colors.HexColor("#1E5967"),
+                "rule_color": colors.HexColor("#D8E3E6"),
+                "body_size": 8.8,
+                "body_leading": 11.6,
+                "item_role_size": 9.1,
+                "item_role_leading": 11.1,
+                "item_company_size": 8.65,
+                "item_company_leading": 10.6,
+                "item_meta_size": 8.2,
+                "item_meta_leading": 10,
+                "bullet_space_after": 1.1,
+                "entry_space_after": 5,
+                "left_margin": 0.34,
+                "right_margin": 0.34,
+                "bottom_margin": 0.26,
+                "banner_height": 2.05,
+                "avatar_radius": 0.68,
+                "sidebar_width": 2.18,
+                "column_gap": 0.26,
+                "sidebar_bg": colors.HexColor("#F3F3F4"),
+                "sidebar_text": colors.HexColor("#23222A"),
+                "sidebar_muted": colors.HexColor("#4B5563"),
+                "sidebar_body_size": 8.55,
+                "sidebar_body_leading": 10.7,
+                "sidebar_meta_size": 8.1,
+                "sidebar_meta_leading": 10.2,
+                "sidebar_contact_size": 8.3,
+                "sidebar_contact_leading": 10.5,
+                "sidebar_title_size": 9.6,
+                "sidebar_title_leading": 11,
+                "section_variant": "stacked",
+                "uppercase_sections": True,
+                "section_titles_without_rule": ["Professional Experience", "Projects", "Certifications", "Certification"],
+                "section_gap_after_header": 7,
+                "section_gap_after": 8,
+                "section_title_overrides": {"experience": "Professional Experience"},
+                "experience_meta_ratio": 0.4,
+                "experience_meta_style": "ItemMetaRight",
+                "project_keep_first_bullet_with_intro": False,
             },
         )
 

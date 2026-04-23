@@ -27,6 +27,14 @@ class RichTextTests(unittest.TestCase):
         payload = ResumeGenerateRequest(template_id="classic-professional", section_color="#1c5fdb", resume=SAMPLE_RESUME)
         self.assertEqual(payload.section_color, "#1c5fdb")
 
+    def test_generate_request_accepts_certification_without_year(self) -> None:
+        resume_data = SAMPLE_RESUME.model_dump(mode="json")
+        resume_data["certifications"][0]["year"] = ""
+
+        payload = ResumeGenerateRequest(template_id="classic-professional", resume=resume_data)
+
+        self.assertEqual(payload.resume.certifications[0].year, "")
+
     def test_build_resume_pdf_accepts_custom_section_color(self) -> None:
         pdf_bytes = build_resume_pdf(SAMPLE_RESUME, "executive-elegance", "#8a6430")
         self.assertGreater(len(pdf_bytes), 1000)

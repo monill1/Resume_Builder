@@ -41,6 +41,7 @@ body {
   margin: 0;
   font-family: "Inter", system-ui, sans-serif;
   color: var(--text);
+  overflow-anchor: none;
 }
 
 button,
@@ -1505,6 +1506,406 @@ a {
   margin-top: 16px;
 }
 
+.ats-simple-result {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.ats-simple-score-card,
+.ats-simple-card {
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+}
+
+.ats-simple-score-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: 18px;
+  padding: 22px;
+  overflow: hidden;
+}
+
+.ats-simple-score-card.tone-good {
+  border-color: rgba(22, 101, 52, 0.18);
+  background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%);
+}
+
+.ats-simple-score-card.tone-moderate {
+  border-color: rgba(146, 64, 14, 0.18);
+  background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%);
+}
+
+.ats-simple-score-card.tone-weak {
+  border-color: rgba(185, 28, 28, 0.18);
+  background: linear-gradient(135deg, #ffffff 0%, #fef2f2 100%);
+}
+
+.ats-simple-score-main {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.ats-simple-score-number {
+  width: 116px;
+  height: 116px;
+  flex: 0 0 116px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 8px rgba(30, 58, 138, 0.08);
+}
+
+.ats-simple-score-number strong {
+  display: block;
+  color: #111827;
+  font-size: 2.4rem;
+  line-height: 0.9;
+}
+
+.ats-simple-score-number span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ats-simple-score-main h3,
+.ats-simple-card h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+.ats-simple-score-main p,
+.ats-simple-list-item p,
+.ats-simple-fix-line p,
+.ats-simple-role-card p,
+.ats-simple-chip-list p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ats-simple-summary {
+  max-width: 58ch;
+  margin-top: 8px !important;
+  color: var(--text) !important;
+  font-weight: 700;
+}
+
+.ats-simple-cta {
+  width: min(100%, 360px);
+  min-height: 52px;
+  margin-top: 16px;
+  justify-content: center;
+  font-size: 1rem;
+  box-shadow: 0 12px 24px rgba(217, 119, 6, 0.2);
+}
+
+.ats-simple-label {
+  margin: 0 0 6px !important;
+  color: var(--primary) !important;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ats-simple-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ats-simple-metric {
+  min-height: 104px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.ats-simple-metric span,
+.ats-simple-role-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ats-simple-metric strong {
+  color: var(--text);
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.ats-simple-metric.tone-blue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.ats-simple-metric.tone-green {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.ats-simple-metric.tone-yellow {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.ats-simple-card {
+  padding: 18px;
+}
+
+.ats-simple-grid.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ats-simple-section-head,
+.ats-simple-skill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ats-simple-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ats-simple-pill.success {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.ats-simple-pill.warning {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.ats-simple-pill.danger {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.ats-simple-pill.neutral {
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.ats-simple-action-list,
+.ats-simple-role-list,
+.ats-simple-role-snapshot {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ats-simple-list-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-height: 54px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.ats-simple-list-item strong,
+.ats-simple-role-card strong {
+  display: block;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.ats-simple-fix-line {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.ats-simple-fix-line + .ats-simple-fix-line {
+  margin-top: 6px;
+}
+
+.ats-simple-fix-line span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ats-simple-fix-line p {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.ats-simple-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.ats-simple-icon.check {
+  background: #16a34a;
+}
+
+.ats-simple-icon.warning {
+  background: #d97706;
+}
+
+.ats-simple-icon.cross {
+  background: #dc2626;
+}
+
+.ats-simple-skill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.ats-simple-skill-grid.columns-1 {
+  grid-template-columns: 1fr;
+}
+
+.ats-simple-skill-grid.columns-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ats-simple-skill-column {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 180px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.ats-simple-skill-head {
+  justify-content: flex-start;
+}
+
+.ats-simple-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ats-simple-chip-list span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.ats-simple-role-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.ats-simple-role-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.ats-simple-role-row strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.ats-simple-role-row > span[aria-hidden="true"] {
+  color: var(--muted);
+  font-weight: 900;
+  text-align: center;
+}
+
+.ats-simple-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.ats-simple-status.strong {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.ats-simple-status.partial {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.ats-simple-status.missing {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.ats-simple-auto-fix {
+  background: linear-gradient(180deg, #fffdf1 0%, #ffffff 100%);
+}
+
 .ats-fix-summary {
   background: linear-gradient(180deg, #fffced 0%, #ffffff 100%);
 }
@@ -1822,11 +2223,13 @@ a {
 
 .resume-preview-stage {
   width: 100%;
+  overflow-anchor: none;
 }
 
 .resume-preview-canvas {
   position: relative;
   width: 100%;
+  overflow-anchor: none;
 }
 
 .resume-sheet {
@@ -2452,6 +2855,12 @@ a {
 
   .two-col,
   .payment-plan-grid,
+  .ats-simple-score-card,
+  .ats-simple-grid.two,
+  .ats-simple-skill-grid,
+  .ats-simple-skill-grid.columns-2,
+  .ats-simple-role-card,
+  .ats-simple-role-row,
   .ats-breakdown-grid,
   .ats-explanation-grid,
   .ats-double-grid,
@@ -2462,6 +2871,38 @@ a {
   .cert-row,
   .ats-score-hero {
     grid-template-columns: 1fr;
+  }
+
+  .ats-simple-score-main {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ats-simple-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .ats-simple-score-number {
+    width: 104px;
+    height: 104px;
+    flex-basis: 104px;
+  }
+
+  .ats-simple-cta {
+    width: 100%;
+  }
+
+  .ats-simple-fix-line {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .ats-simple-role-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ats-simple-role-row > span[aria-hidden="true"] {
+    display: none;
   }
 
   .section-title,

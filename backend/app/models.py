@@ -91,7 +91,12 @@ class EducationItem(BaseModel):
 class CertificationItem(BaseModel):
     title: str = Field(..., min_length=2, max_length=120)
     issuer: str = Field(..., min_length=2, max_length=80)
-    year: str = Field(..., min_length=2, max_length=20)
+    year: str = Field(default="", max_length=20)
+
+    @field_validator("year", mode="before")
+    @classmethod
+    def _blank_year_to_empty_string(cls, value: object) -> object:
+        return "" if value is None else value
 
 
 SectionKey = Literal["summary", "skills", "experience", "projects", "education", "certifications"]
@@ -99,6 +104,7 @@ TemplateId = Literal[
     "classic-professional",
     "contemporary-accent",
     "executive-elegance",
+    "profile-banner",
 ]
 
 

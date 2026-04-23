@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { buildResumeViewModel } from "./helpers";
 import { DEFAULT_TEMPLATE_ID } from "./templateMeta";
 import { buildThemePalette } from "./themePalette";
 import ClassicProfessional from "./templates/ClassicProfessional";
 import ContemporaryAccent from "./templates/ContemporaryAccent";
 import ExecutiveElegance from "./templates/ExecutiveElegance";
+import ProfileBanner from "./templates/ProfileBanner";
 
 const PREVIEW_PAGE_WIDTH = 816;
 const PREVIEW_PAGE_HEIGHT = 1056;
@@ -13,6 +14,7 @@ const TEMPLATE_COMPONENTS = {
   "classic-professional": ClassicProfessional,
   "contemporary-accent": ContemporaryAccent,
   "executive-elegance": ExecutiveElegance,
+  "profile-banner": ProfileBanner,
 };
 
 export default function ResumePreview({ resume, selectedTemplate, sectionColor }) {
@@ -26,18 +28,23 @@ export default function ResumePreview({ resume, selectedTemplate, sectionColor }
   const data = buildResumeViewModel(resume);
   const palette = buildThemePalette(sectionColor);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!previewStageRef.current || !sheetRef.current) return undefined;
+
+    let frameId = 0;
 
     const measure = () => {
       const stageWidth = previewStageRef.current?.clientWidth || PREVIEW_PAGE_WIDTH;
       const nextScale = Math.min(stageWidth / PREVIEW_PAGE_WIDTH, 1);
       const nextHeight = Math.max(sheetRef.current?.scrollHeight || PREVIEW_PAGE_HEIGHT, PREVIEW_PAGE_HEIGHT);
-      setPreviewScale(nextScale);
-      setSheetHeight(nextHeight);
+      setPreviewScale((currentScale) => (currentScale === nextScale ? currentScale : nextScale));
+      setSheetHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
     };
 
-    const rafMeasure = () => window.requestAnimationFrame(measure);
+    const rafMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measure);
+    };
 
     measure();
 
@@ -47,6 +54,7 @@ export default function ResumePreview({ resume, selectedTemplate, sectionColor }
     sheetObserver.observe(sheetRef.current);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       stageObserver.disconnect();
       sheetObserver.disconnect();
     };

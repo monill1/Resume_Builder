@@ -20,6 +20,13 @@ export const RESUME_TEMPLATES = [
     atsLevel: "High",
     defaultSectionColor: "#8a6430",
   },
+  {
+    id: "profile-banner",
+    name: "Profile Banner",
+    description: "Bold top banner with a circular profile mark, info sidebar, and roomy main column.",
+    atsLevel: "Medium",
+    defaultSectionColor: "#dc5b60",
+  },
 ];
 
 export const DEFAULT_TEMPLATE_ID = RESUME_TEMPLATES[0].id;

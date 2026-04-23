@@ -159,7 +159,7 @@ function getTemplateSectionColor(templateId, colorMap) {
 
 function updateSelectionAfterFormat(input, selectionStart, selectionEnd) {
   window.requestAnimationFrame(() => {
-    input.focus();
+    input.focus({ preventScroll: true });
     input.setSelectionRange(selectionStart, selectionEnd);
   });
 }
@@ -990,7 +990,14 @@ function App() {
         highlights: item.highlights.filter(Boolean),
       })),
     education: resume.education.filter((item) => hasAnyText(item.institution, item.degree, item.duration, item.score, item.location)),
-    certifications: resume.certifications.filter((item) => hasAnyText(item.title, item.issuer, item.year)),
+    certifications: resume.certifications
+      .map((item) => ({
+        ...item,
+        title: String(item.title || "").trim(),
+        issuer: String(item.issuer || "").trim(),
+        year: String(item.year || "").trim(),
+      }))
+      .filter((item) => hasAnyText(item.title, item.issuer, item.year)),
     layout_options: normalizeLayoutOptions(resume.layout_options),
     section_order: normalizeSectionOrder(resume.section_order),
   });
@@ -2028,22 +2035,25 @@ function ATSWorkspaceSection({
               <div className="ats-results-head">
                 <div>
                   <p className="ats-kicker">Results</p>
-                  <h3>ATS insights and recommendation panels</h3>
+                  <h3>Simple ATS dashboard</h3>
                 </div>
                 <div className="ats-results-actions">
                   <span className="ats-workbench-pill is-result">Latest analysis loaded</span>
-                  <Button variant="primary" onClick={onAutoFix} disabled={atsLoading || atsFixing}>
-                    {atsFixing ? "Auto-Fixing..." : "Improve Score by Auto-Fixing"}
-                  </Button>
                 </div>
               </div>
-              <ATSResultPanel result={atsResult} optimization={atsOptimization} />
+              <ATSSimpleResultPanel
+                result={atsResult}
+                optimization={atsOptimization}
+                onAutoFix={onAutoFix}
+                autoFixDisabled={atsLoading || atsFixing}
+                autoFixing={atsFixing}
+              />
             </>
           ) : (
             <div className="ats-empty-state">
               <p className="ats-kicker">Ready</p>
               <h3>Your ATS dashboard will appear here.</h3>
-              <p>Run the ATS test from this section to load scorecards, matched keywords, formatting warnings, and suggested edits.</p>
+              <p>Run the ATS test from this section to see the score, critical gaps, matched skills, and clear next steps.</p>
             </div>
           )}
         </div>
@@ -2518,6 +2528,398 @@ function BulletListEditor({ label, items, addLabel, onChange, onAdd, onRemove })
       </div>
     </div>
   );
+}
+
+function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled, autoFixing }) {
+  const overallScore = normalizeScore(result.overall_ats_score ?? result.overall_score);
+  const status = simpleAtsStatus(overallScore);
+  const metrics = [
+    { label: "Job Match", value: normalizeScore(result.job_match_score ?? result.overall_score), tone: "blue" },
+    { label: "Keyword Match", value: normalizeScore(result.section_scores?.keyword_coverage ?? result.section_scores?.skills_match), tone: "green" },
+    { label: "Experience Match", value: normalizeScore(result.section_scores?.experience_relevance ?? result.responsibility_match_score), tone: "yellow" },
+  ];
+  const fixes = buildSimpleFixes(result, optimization);
+  const skills = buildSimpleSkills(result);
+  const skillGroups = [
+    { title: "Strong", icon: "check", items: skills.strong },
+    { title: "Needs Improvement", icon: "warning", items: skills.needsImprovement },
+    { title: "Missing", icon: "cross", items: skills.missing },
+  ].filter((group) => group.items.length);
+  const roleFits = buildSimpleRoleFit(result, skills);
+  const summary = buildSimpleAtsSummary(result, status, fixes.length, optimization);
+
+  return (
+    <div className="ats-simple-result">
+      <section className={`ats-simple-score-card tone-${status.tone}`}>
+        <div className="ats-simple-score-main">
+          <div className="ats-simple-score-number">
+            <strong>{overallScore}</strong>
+            <span>/100</span>
+          </div>
+          <div>
+            <p className="ats-simple-label">ATS Score</p>
+            <h3>{status.label}</h3>
+            <p className="ats-simple-summary">{summary}</p>
+            <Button variant="primary" className="ats-simple-cta" onClick={onAutoFix} disabled={autoFixDisabled}>
+              {autoFixing ? "Fixing..." : "Fix My Resume Automatically"}
+            </Button>
+          </div>
+        </div>
+        <div className="ats-simple-metrics">
+          {metrics.map((metric) => (
+            <div className={`ats-simple-metric tone-${metric.tone}`} key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {fixes.length ? (
+        <section className="ats-simple-card">
+          <div className="ats-simple-section-head">
+            <div>
+              <p className="ats-simple-label">Action Plan</p>
+              <h4>Fix These to Improve Score</h4>
+            </div>
+            <span className="ats-simple-pill warning">Max 5</span>
+          </div>
+          <div className="ats-simple-action-list">
+            {fixes.map((item, index) => (
+              <SimpleFixItem item={item} key={`simple-fix-${index}`} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {skillGroups.length ? (
+        <section className="ats-simple-card">
+          <div className="ats-simple-section-head">
+            <div>
+              <p className="ats-simple-label">Skills Match</p>
+              <h4>Strong, Needs Improvement, Missing</h4>
+            </div>
+          </div>
+          <div className={`ats-simple-skill-grid columns-${skillGroups.length}`}>
+            {skillGroups.map((group) => (
+              <SkillColumn title={group.title} icon={group.icon} items={group.items} key={group.title} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {roleFits.length ? (
+        <section className="ats-simple-card">
+          <div className="ats-simple-section-head">
+            <div>
+              <p className="ats-simple-label">Role Fit Snapshot</p>
+              <h4>Skill to status</h4>
+            </div>
+            <span className="ats-simple-pill neutral">Max 5</span>
+          </div>
+          <div className="ats-simple-role-snapshot">
+            {roleFits.map((item) => (
+              <div className="ats-simple-role-row" key={`role-fit-${item.skill}`}>
+                <strong>{item.skill}</strong>
+                <span aria-hidden="true">-&gt;</span>
+                <span className={`ats-simple-status ${item.tone}`}>{item.status}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function SimpleFixItem({ item }) {
+  return (
+    <div className="ats-simple-list-item">
+      <span className={`ats-simple-icon ${item.icon}`} aria-hidden="true">
+        {simpleIconText(item.icon)}
+      </span>
+      <div>
+        <div className="ats-simple-fix-line">
+          <span>Problem</span>
+          <strong>{item.problem}</strong>
+        </div>
+        <div className="ats-simple-fix-line">
+          <span>Fix</span>
+          <p>{item.fix}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SimpleListItem({ icon, title, text }) {
+  return (
+    <div className="ats-simple-list-item">
+      <span className={`ats-simple-icon ${icon}`} aria-hidden="true">
+        {simpleIconText(icon)}
+      </span>
+      <div>
+        <strong>{title}</strong>
+        {text ? <p>{text}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function SkillColumn({ title, icon, items, emptyText }) {
+  return (
+    <div className="ats-simple-skill-column">
+      <div className="ats-simple-skill-head">
+        <span className={`ats-simple-icon ${icon}`} aria-hidden="true">
+          {simpleIconText(icon)}
+        </span>
+        <strong>{title}</strong>
+      </div>
+      <div className="ats-simple-chip-list">
+        {items.length ? items.map((item) => <span key={`${title}-${item}`}>{item}</span>) : <p>{emptyText}</p>}
+      </div>
+    </div>
+  );
+}
+
+function buildSimpleFixes(result, optimization) {
+  const fixes = [];
+  const addFix = (problem, fix, icon = "warning", rank = 3) => {
+    const cleanedProblem = shortText(problem, 76);
+    const cleanedFix = shortText(fix, 110);
+    if (!cleanedProblem || !cleanedFix) return;
+    if (fixes.some((item) => item.problem.toLowerCase() === cleanedProblem.toLowerCase())) return;
+    fixes.push({ problem: cleanedProblem, fix: cleanedFix, icon, rank });
+  };
+
+  (result.missing_required_skills ?? []).forEach((item) => {
+    addFix(`Missing required skill: ${item.keyword}`, `Add ${item.keyword} to skills and prove it in one work or project bullet if true.`, "cross", 0);
+  });
+  (result.missing_keywords ?? [])
+    .filter((item) => ["high", "medium"].includes(String(item.importance || "").toLowerCase()))
+    .forEach((item) => {
+      const highPriority = item.importance === "high";
+      addFix(`Missing skill: ${item.keyword}`, `Mention ${item.keyword} and add one real evidence bullet if accurate.`, highPriority ? "cross" : "warning", highPriority ? 1 : 2);
+    });
+  (result.critical_gaps ?? []).forEach((item) => {
+    addFix(item.title, item.impact || item.details, "cross", 1);
+  });
+
+  const groupedSuggestions = result.suggestions ?? {};
+  ["high_impact", "medium_impact", "low_impact"].forEach((key) => {
+    (groupedSuggestions[key] ?? []).forEach((item) => {
+      addFix(item.title, item.suggested_edit || item.details, key === "high_impact" ? "warning" : "check", key === "high_impact" ? 2 : 4);
+    });
+  });
+  (result.improvement_suggestions ?? []).forEach((item) => {
+    addFix(item.title, item.suggested_edit || item.details, "warning", 3);
+  });
+  (optimization?.remaining_gaps ?? []).forEach((item) => {
+    addFix(`Add proof for ${item}`, `Show ${item} in one specific work or project bullet.`, "warning", 2);
+  });
+
+  return fixes.sort((left, right) => left.rank - right.rank).slice(0, 5);
+}
+
+function buildSimpleCriticalIssues(result) {
+  const issues = [];
+  const addIssue = (title, text, icon = "cross") => {
+    const cleanedTitle = cleanDisplayText(title);
+    if (!cleanedTitle || issues.some((item) => item.title.toLowerCase() === cleanedTitle.toLowerCase())) return;
+    issues.push({ title: cleanedTitle, text: cleanDisplayText(text), icon });
+  };
+
+  (result.missing_required_skills ?? []).forEach((item) => {
+    addIssue(`Missing required skill: ${item.keyword}`, item.details || "Add this only if you can support it with real experience.");
+  });
+  (result.missing_keywords ?? [])
+    .filter((item) => item.importance === "high")
+    .forEach((item) => addIssue(`Missing skill: ${item.keyword}`, item.details));
+  (result.critical_gaps ?? []).forEach((item) => {
+    addIssue(item.title, item.impact || item.details);
+  });
+  (result.formatting_issues ?? [])
+    .filter((item) => ["critical", "high"].includes(String(item.severity || "").toLowerCase()))
+    .forEach((item) => addIssue(item.issue, item.recommendation || item.details, "warning"));
+
+  return issues.slice(0, 5);
+}
+
+function buildSimpleSuggestions(result, optimization) {
+  const suggestions = [];
+  const addSuggestion = (title, text) => {
+    const cleanedTitle = cleanDisplayText(title);
+    if (!cleanedTitle || suggestions.some((item) => item.title.toLowerCase() === cleanedTitle.toLowerCase())) return;
+    suggestions.push({ title: cleanedTitle, text: cleanDisplayText(text) });
+  };
+  const groupedSuggestions = result.suggestions ?? {};
+
+  ["high_impact", "medium_impact", "low_impact"].forEach((key) => {
+    (groupedSuggestions[key] ?? []).forEach((item) => {
+      addSuggestion(item.title, item.suggested_edit || item.details);
+    });
+  });
+  (result.improvement_suggestions ?? []).forEach((item) => {
+    addSuggestion(item.title, item.suggested_edit || item.details);
+  });
+  (optimization?.remaining_gaps ?? []).forEach((item) => {
+    addSuggestion(`Add proof for ${item}`, "Use a real project or work bullet that shows where you used it.");
+  });
+
+  return suggestions.slice(0, 5);
+}
+
+function buildSimpleSkills(result) {
+  const comparisonItems = (result.comparison_view ?? []).filter((item) => isSkillLikeTerm(item.requirement));
+  const missing = uniqueDisplayItems([
+    ...comparisonItems.filter((item) => item.status === "missing").map((item) => item.requirement),
+    ...(result.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result.missing_keywords ?? []).map((item) => item.keyword),
+  ]).filter(isSkillLikeTerm);
+  const strong = uniqueDisplayItems([
+    ...comparisonItems.filter((item) => item.status === "matched").map((item) => item.requirement),
+    ...(result.matched_keywords ?? []).map((item) => item.keyword),
+  ])
+    .filter(isSkillLikeTerm)
+    .filter((item) => !includesDisplayItem(missing, item));
+  const needsImprovement = uniqueDisplayItems([
+    ...comparisonItems.filter((item) => item.status === "partial").map((item) => item.requirement),
+    ...(result.weak_evidence_skills ?? []).map((item) => item.keyword),
+  ])
+    .filter(isSkillLikeTerm)
+    .filter((item) => !includesDisplayItem(missing, item) && !includesDisplayItem(strong, item));
+
+  return {
+    strong: strong.slice(0, 10),
+    needsImprovement: needsImprovement.slice(0, 10),
+    missing: missing.slice(0, 10),
+  };
+}
+
+function buildSimpleRoleMatches(result) {
+  const comparisonMatches = (result.comparison_view ?? []).map((item) => ({
+    requirement: item.requirement,
+    evidence: item.evidence?.[0] || "",
+    score: item.status === "matched" ? 2 : item.status === "partial" ? 1 : 0,
+  }));
+  const semanticMatches = (result.semantic_requirement_matches ?? []).map((item) => ({
+    requirement: item.job_requirement,
+    evidence: item.matched_resume_bullet || "",
+    score: item.match_strength === "strong" ? 2 : item.match_strength === "partial" ? 1 : 0,
+  }));
+
+  return [...semanticMatches, ...comparisonMatches]
+    .filter((item) => cleanDisplayText(item.requirement))
+    .sort((left, right) => right.score - left.score)
+    .filter((item, index, list) => list.findIndex((candidate) => cleanDisplayText(candidate.requirement).toLowerCase() === cleanDisplayText(item.requirement).toLowerCase()) === index)
+    .slice(0, 5);
+}
+
+function buildSimpleRoleFit(result, skills) {
+  const comparisonRows = (result.comparison_view ?? [])
+    .filter((item) => isSkillLikeTerm(item.requirement))
+    .map((item) => ({
+      skill: cleanDisplayText(item.requirement),
+      status: statusLabel(item.status),
+      tone: statusTone(item.status),
+      rank: item.status === "missing" ? 0 : item.status === "partial" ? 1 : 2,
+    }));
+  const fallbackRows = [
+    ...skills.missing.map((skill) => ({ skill, status: "Missing", tone: "missing", rank: 0 })),
+    ...skills.needsImprovement.map((skill) => ({ skill, status: "Partial", tone: "partial", rank: 1 })),
+    ...skills.strong.map((skill) => ({ skill, status: "Strong", tone: "strong", rank: 2 })),
+  ];
+
+  return uniqueRoleRows(comparisonRows.length ? comparisonRows : fallbackRows)
+    .sort((left, right) => left.rank - right.rank)
+    .slice(0, 5);
+}
+
+function normalizeScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return 0;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function simpleAtsStatus(score) {
+  if (score >= 78) return { label: "Good", tone: "good" };
+  if (score >= 60) return { label: "Moderate", tone: "moderate" };
+  return { label: "Weak", tone: "weak" };
+}
+
+function buildSimpleAtsSummary(result, status, fixCount, optimization) {
+  if (optimization) {
+    return `Auto-fix updated score from ${optimization.previous_score} to ${optimization.updated_score}.`;
+  }
+  if (fixCount) {
+    return `${status.label} fit for ${result.job_title || "this role"}; fix ${fixCount} priority item${fixCount === 1 ? "" : "s"} first.`;
+  }
+  return `${status.label} fit for ${result.job_title || "this role"}; no priority fixes found.`;
+}
+
+function cleanDisplayText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function shortText(value, maxLength) {
+  const text = cleanDisplayText(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}...`;
+}
+
+function uniqueDisplayItems(items) {
+  const seen = new Set();
+  return items
+    .map(cleanDisplayText)
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function includesDisplayItem(items, value) {
+  const key = cleanDisplayText(value).toLowerCase();
+  return items.some((item) => cleanDisplayText(item).toLowerCase() === key);
+}
+
+function isSkillLikeTerm(value) {
+  const text = cleanDisplayText(value);
+  if (!text || text.length > 48 || /[.!?]$/.test(text)) return false;
+  const words = text.split(/\s+/);
+  if (words.length > 5) return false;
+  if (words.length > 2 && /\b(experience|responsibilities|qualifications|required|build|built|develop|design|create|partner|manage|own)\b/i.test(text)) return false;
+  return true;
+}
+
+function simpleIconText(icon) {
+  if (icon === "check") return "OK";
+  if (icon === "cross") return "X";
+  return "!";
+}
+
+function statusLabel(status) {
+  if (status === "matched") return "Strong";
+  if (status === "partial") return "Partial";
+  return "Missing";
+}
+
+function statusTone(status) {
+  if (status === "matched") return "strong";
+  if (status === "partial") return "partial";
+  return "missing";
+}
+
+function uniqueRoleRows(rows) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = cleanDisplayText(row.skill).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function ATSResultPanel({ result, optimization }) {

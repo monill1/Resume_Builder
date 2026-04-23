@@ -42,7 +42,7 @@ SAMPLE_RESUME = ResumePayload.model_validate(
                 ],
             },
             {
-                "company": "BrainerHub",
+                "company": "ItHub",
                 "company_link": "https://www.brainerhub.com/",
                 "role": "Python Developer (AI/ML) Intern",
                 "location": "Ahmedabad",
