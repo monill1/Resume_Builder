@@ -1002,7 +1002,6 @@ function App() {
     section_order: normalizeSectionOrder(resume.section_order),
   });
   const currentResumePayload = cleanPayload();
-
   const buildAtsRequestPayload = () => {
     const normalizedJobUrl = normalizeUrl(atsJobUrl);
     const trimmedJobDescription = atsJobDescription.trim();
@@ -1322,7 +1321,7 @@ function App() {
   }
 
   return (
-    <div className="page-shell">
+    <div className={`page-shell ${activeWorkspace === "ats" ? "page-shell-ats" : ""}`}>
       <AppNavbar
         activeWorkspace={activeWorkspace}
         authUser={authUser}
@@ -1360,38 +1359,36 @@ function App() {
         onPurchase={purchasePdfPlan}
       />
 
-      <div className="page-container">
-        <header className="hero">
-          <div className="hero-panel">
-            <div className="hero-layout">
-              <div className="hero-main">
-                <p className="eyebrow">ATS Resume Builder</p>
-                <h1>Build ATS-safe resumes and verify them against real job requirements.</h1>
-                <p className="hero-text">Create a structured resume, export a clean PDF, and run a weighted ATS score that explains what is missing, what may hurt parsing, and what to edit next.</p>
-                <p className="status-text">{status}</p>
-              </div>
-
-              <div className="hero-summary">
-                <span>Workflow</span>
-                <strong>{activeWorkspace === "ats" ? "ATS workspace with live editor data" : "Editor, PDF export, and ATS scoring in one place"}</strong>
-                <p>
-                  {activeWorkspace === "ats"
-                    ? "Run ATS analysis in a dedicated page-style workspace while still using the current resume data from the editor."
-                    : "Compare your resume against a public posting or pasted job description with section scores, risk checks, and edit-ready recommendations."}
-                </p>
-                <Button
-                  variant="secondary"
-                  className="hero-ats-link"
-                  onClick={activeWorkspace === "ats" ? openEditorWorkspace : openAtsWorkspace}
-                >
-                  {activeWorkspace === "ats" ? "Open Editor Workspace" : "Open ATS Workspace"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </header>
-
+      <div className={`page-container ${activeWorkspace === "ats" ? "page-container-ats" : ""}`}>
         {activeWorkspace === "editor" ? (
+          <>
+            <header className="hero">
+              <div className="hero-panel">
+                <div className="hero-layout">
+                  <div className="hero-main">
+                    <p className="eyebrow">ATS Resume Builder</p>
+                    <h1>Build ATS-safe resumes and verify them against real job requirements.</h1>
+                    <p className="hero-text">Create a structured resume, export a clean PDF, and run a weighted ATS score that explains what is missing, what may hurt parsing, and what to edit next.</p>
+                    <p className="status-text">{status}</p>
+                  </div>
+
+                  <div className="hero-summary">
+                    <span>Workflow</span>
+                    <strong>Editor, PDF export, and ATS scoring in one place</strong>
+                    <p>
+                      Compare your resume against a public posting or pasted job description with section scores, risk checks, and edit-ready recommendations.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      className="hero-ats-link"
+                      onClick={openAtsWorkspace}
+                    >
+                      Open ATS Workspace
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </header>
           <main id="editor-workspace" className="workspace">
             <section className="editor-panel">
             <div className="panel-lead">
@@ -1546,24 +1543,55 @@ function App() {
               <ResumePreviewPanel resume={resume} selectedTemplate={selectedTemplate} sectionColor={currentSectionColor} />
             </section>
           </main>
+          </>
         ) : (
-          <ATSWorkspaceSection
-            atsLoading={atsLoading}
-            atsFixing={atsFixing}
-            atsStatus={atsStatus}
-            atsTargetTitle={atsTargetTitle}
-            atsJobUrl={atsJobUrl}
-            atsJobDescription={atsJobDescription}
-            atsResult={atsResult}
-            atsOptimization={atsOptimization}
-            currentResume={currentResumePayload}
-            onTargetTitleChange={setAtsTargetTitle}
-            onJobUrlChange={setAtsJobUrl}
-            onJobDescriptionChange={setAtsJobDescription}
-            onAnalyze={analyzeAts}
-            onAutoFix={autoFixResume}
-            onLoadDemoJob={loadDemoJob}
-          />
+          <main id="ats-workspace" className="ats-page-flow">
+            <header className="hero hero-ats-mode">
+              <div className="hero-panel hero-panel-ats">
+                <div className="hero-layout">
+                  <div className="hero-main">
+                    <p className="eyebrow">ATS Resume Builder</p>
+                    <h1>Build ATS-safe resumes and verify them against real job requirements.</h1>
+                    <p className="hero-text">Create a structured resume, export a clean PDF, and run a weighted ATS score that explains what is missing, what may hurt parsing, and what to edit next.</p>
+                    <p className="status-text">{status}</p>
+                  </div>
+
+                  <div className="hero-summary">
+                    <span>Workflow</span>
+                    <strong>ATS workspace with live editor data</strong>
+                    <p>
+                      Run ATS analysis in a dedicated page-style workspace while still using the current resume data from the editor.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      className="hero-ats-link"
+                      onClick={openEditorWorkspace}
+                    >
+                      Open Editor Workspace
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            <ATSWorkspaceSection
+              atsLoading={atsLoading}
+              atsFixing={atsFixing}
+              atsStatus={atsStatus}
+              atsTargetTitle={atsTargetTitle}
+              atsJobUrl={atsJobUrl}
+              atsJobDescription={atsJobDescription}
+              atsResult={atsResult}
+              atsOptimization={atsOptimization}
+              currentResume={currentResumePayload}
+              onTargetTitleChange={setAtsTargetTitle}
+              onJobUrlChange={setAtsJobUrl}
+              onJobDescriptionChange={setAtsJobDescription}
+              onAnalyze={analyzeAts}
+              onAutoFix={autoFixResume}
+              onLoadDemoJob={loadDemoJob}
+            />
+          </main>
         )}
       </div>
     </div>
@@ -1816,8 +1844,18 @@ function AppNavbar({
     <nav className="app-navbar">
       <div className="app-navbar-inner">
         <div className="app-navbar-brand">
-          <span className="app-navbar-label">ATS Resume Builder</span>
-          <strong>Save, export, and manage your resume from one toolbar</strong>
+          <span className="app-navbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M8 3.5h6l4.5 4.5V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6.5 20V5A1.5 1.5 0 0 1 8 3.5Z" />
+              <path d="M14 3.5V8h4.5" />
+              <path d="M9 11.5h6" />
+              <path d="M9 15h6" />
+            </svg>
+          </span>
+          <div className="app-navbar-brand-copy">
+            <span className="app-navbar-label">ATS Resume Builder</span>
+            <strong>Save, export &amp; manage</strong>
+          </div>
         </div>
 
         <button
@@ -1875,7 +1913,7 @@ function AppNavbar({
             onActionComplete={closeMenu}
           />
           <span className="app-navbar-payment">{paymentLabel}</span>
-          <Button variant="nav" onClick={() => runAndClose(onGenerateResume)} disabled={loading}>
+          <Button variant="nav" className="app-navbar-download" onClick={() => runAndClose(onGenerateResume)} disabled={loading}>
             {loading ? "Generating..." : "Download PDF"}
           </Button>
           <Button variant="nav" className="app-navbar-account" onClick={() => runAndClose(onLogout)} title={`Signed in as ${authUser.email}`}>
@@ -2538,30 +2576,38 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
     { label: "Keyword Match", value: normalizeScore(result.section_scores?.keyword_coverage ?? result.section_scores?.skills_match), tone: "green" },
     { label: "Experience Match", value: normalizeScore(result.section_scores?.experience_relevance ?? result.responsibility_match_score), tone: "yellow" },
   ];
-  const fixes = buildSimpleFixes(result, optimization);
+  const allFixes = buildSimpleFixes(result, optimization);
+  const fixes = allFixes.slice(0, 5);
   const skills = buildSimpleSkills(result);
   const skillGroups = [
-    { title: "Strong", icon: "check", items: skills.strong },
-    { title: "Needs Improvement", icon: "warning", items: skills.needsImprovement },
-    { title: "Missing", icon: "cross", items: skills.missing },
+    { title: "Strong", icon: "check", tone: "strong", items: skills.strong },
+    { title: "Needs Improvement", icon: "warning", tone: "warning", items: skills.needsImprovement },
+    { title: "Missing", icon: "cross", tone: "missing", items: skills.missing },
   ].filter((group) => group.items.length);
   const roleFits = buildSimpleRoleFit(result, skills);
   const summary = buildSimpleAtsSummary(result, status, fixes.length, optimization);
+  const actionPlanLabel = allFixes.length > fixes.length ? `Showing ${fixes.length} of ${allFixes.length}` : `${fixes.length} item${fixes.length === 1 ? "" : "s"}`;
 
   return (
     <div className="ats-simple-result">
       <section className={`ats-simple-score-card tone-${status.tone}`}>
         <div className="ats-simple-score-main">
-          <div className="ats-simple-score-number">
-            <strong>{overallScore}</strong>
-            <span>/100</span>
+          <div className="ats-simple-score-number" style={{ "--score": overallScore }}>
+            <div className="ats-simple-score-ring">
+              <div className="ats-simple-score-ring-core">
+                <strong>{overallScore}</strong>
+                <span>/100</span>
+              </div>
+            </div>
           </div>
-          <div>
+          <div className="ats-simple-score-copy">
             <p className="ats-simple-label">ATS Score</p>
             <h3>{status.label}</h3>
+            <p className="ats-simple-role-caption">{result.job_title || "Target role"}</p>
             <p className="ats-simple-summary">{summary}</p>
             <Button variant="primary" className="ats-simple-cta" onClick={onAutoFix} disabled={autoFixDisabled}>
-              {autoFixing ? "Fixing..." : "Fix My Resume Automatically"}
+              <span className="ats-simple-cta-sheen" aria-hidden="true" />
+              <span className="ats-simple-cta-text">{autoFixing ? "Fixing..." : "Fix My Resume Automatically"}</span>
             </Button>
           </div>
         </div>
@@ -2582,7 +2628,7 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
               <p className="ats-simple-label">Action Plan</p>
               <h4>Fix These to Improve Score</h4>
             </div>
-            <span className="ats-simple-pill warning">Max 5</span>
+            <span className="ats-simple-pill warning">{actionPlanLabel}</span>
           </div>
           <div className="ats-simple-action-list">
             {fixes.map((item, index) => (
@@ -2602,7 +2648,7 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
           </div>
           <div className={`ats-simple-skill-grid columns-${skillGroups.length}`}>
             {skillGroups.map((group) => (
-              <SkillColumn title={group.title} icon={group.icon} items={group.items} key={group.title} />
+              <SkillColumn title={group.title} icon={group.icon} tone={group.tone} items={group.items} key={group.title} />
             ))}
           </div>
         </section>
@@ -2634,11 +2680,11 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
 
 function SimpleFixItem({ item }) {
   return (
-    <div className="ats-simple-list-item">
+    <div className={`ats-simple-list-item tone-${item.icon}`}>
       <span className={`ats-simple-icon ${item.icon}`} aria-hidden="true">
         {simpleIconText(item.icon)}
       </span>
-      <div>
+      <div className="ats-simple-list-copy">
         <div className="ats-simple-fix-line">
           <span>Problem</span>
           <strong>{item.problem}</strong>
@@ -2668,7 +2714,7 @@ function SimpleListItem({ icon, title, text }) {
 
 function SkillColumn({ title, icon, items, emptyText }) {
   return (
-    <div className="ats-simple-skill-column">
+    <div className={`ats-simple-skill-column tone-${icon}`}>
       <div className="ats-simple-skill-head">
         <span className={`ats-simple-icon ${icon}`} aria-hidden="true">
           {simpleIconText(icon)}
