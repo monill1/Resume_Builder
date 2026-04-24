@@ -45,11 +45,37 @@ class Basics(BaseModel):
     linkedin: Optional[HttpUrl] = None
     github: Optional[HttpUrl] = None
     website: Optional[HttpUrl] = None
+    photo: Optional[str] = Field(default=None, max_length=2_000_000)
+    photo_offset_y: int = Field(default=0, ge=-40, le=40)
     summary: str = Field(..., min_length=30, max_length=900)
 
     _normalize_linkedin = field_validator("linkedin", mode="before")(_normalize_url)
     _normalize_github = field_validator("github", mode="before")(_normalize_url)
     _normalize_website = field_validator("website", mode="before")(_normalize_url)
+
+    @field_validator("photo", mode="before")
+    @classmethod
+    def _normalize_photo(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return None if value is None else value
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        return trimmed if trimmed.startswith("data:image/") else None
+
+    @field_validator("photo_offset_y", mode="before")
+    @classmethod
+    def _normalize_photo_offset_y(cls, value: object) -> object:
+        if value is None or value == "":
+            return 0
+        if isinstance(value, (int, float)):
+            return max(-40, min(40, int(round(value))))
+        if isinstance(value, str):
+            try:
+                return max(-40, min(40, int(round(float(value.strip())))))
+            except ValueError:
+                return 0
+        return value
 
 
 class SkillCategory(BaseModel):

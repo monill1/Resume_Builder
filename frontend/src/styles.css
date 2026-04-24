@@ -1737,6 +1737,118 @@ a {
   line-height: 1.5;
 }
 
+.photo-field {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fafbff, #f5f7fb);
+}
+
+.photo-field-media {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.photo-field-preview {
+  width: 88px;
+  height: 88px;
+  flex: 0 0 88px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.photo-field-preview img {
+  display: block;
+  max-width: none;
+  transition: transform 160ms ease;
+}
+
+.photo-field-preview span {
+  color: var(--primary);
+  font-size: 1.8rem;
+  font-weight: 800;
+}
+
+.photo-field-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.photo-field-copy strong {
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.photo-field-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.photo-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.photo-field-input {
+  display: none;
+}
+
+.photo-field-remove {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.photo-position-field {
+  display: grid;
+  gap: 10px;
+}
+
+.photo-position-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.photo-position-head span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.photo-position-head strong {
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.photo-position-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+.photo-position-scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .field input,
 .field textarea,
 .bullet-input-row input {

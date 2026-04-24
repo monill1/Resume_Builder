@@ -86,13 +86,7 @@ class SemanticMatcherResult:
 
 
 def warm_semantic_model() -> None:
-    """Load the sentence-transformer once when the host has enough memory.
-
-    Render free instances are currently limited to 512 MB. Importing PyTorch
-    and loading MiniLM can exceed that before the API binds to its port, so
-    auto mode skips warmup on constrained hosts and uses the deterministic
-    fallback matcher instead.
-    """
+    """Load the sentence-transformer once when the host has enough memory."""
     if not _should_use_hf_model():
         logger.info("Semantic matcher warmup skipped; using local fallback matcher.")
         return
@@ -258,25 +252,10 @@ def _should_use_hf_model() -> bool:
     if engine in {"1", "true", "on", "hf", "huggingface", "sentence-transformer"}:
         return True
 
-    if _is_render_runtime():
-        return False
-
     memory_limit_mb = _memory_limit_mb()
     if memory_limit_mb is not None and memory_limit_mb < MIN_HF_MEMORY_MB:
         return False
     return True
-
-
-def _is_render_runtime() -> bool:
-    return any(
-        os.getenv(name)
-        for name in (
-            "RENDER",
-            "RENDER_SERVICE_ID",
-            "RENDER_SERVICE_NAME",
-            "RENDER_EXTERNAL_URL",
-        )
-    )
 
 
 def _memory_limit_mb() -> int | None:

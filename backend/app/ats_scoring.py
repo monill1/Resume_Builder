@@ -344,6 +344,7 @@ def _calibrate_job_match(
     caps = ATS_SCORING_CONFIG["calibration_caps"]
     cap = 100
     applied: list[dict[str, object]] = []
+    requirement_match_count = len(semantic_match.requirement_matches)
 
     def add_cap(name: str, cap_value: int, reason: str, trigger: str) -> None:
         nonlocal cap
@@ -355,6 +356,14 @@ def _calibrate_job_match(
                 "reason": reason,
                 "triggered_by": trigger,
             }
+        )
+
+    if not semantic_match.semantic_model_available and requirement_match_count >= 3:
+        add_cap(
+            "semantic_model_unavailable",
+            caps["semantic_model_unavailable"],
+            "Sentence-transformer semantic matching is unavailable, so the ATS score is capped conservatively.",
+            f"semantic_model={semantic_match.semantic_model_name}",
         )
 
     missing_required_hard = [
@@ -390,14 +399,14 @@ def _calibrate_job_match(
             "Years of experience appear below the stated requirement.",
             f"resume_years={resume.experience_years}, required_years={job.years_required}",
         )
-    if semantic_match.requirement_matches and semantic_match.semantic_requirement_match_score < 46 and semantic_match.responsibility_match_score < 50:
+    if requirement_match_count and semantic_match.semantic_requirement_match_score < 46 and semantic_match.responsibility_match_score < 50:
         add_cap(
             "weak_semantic_or_responsibility",
             caps["weak_semantic_or_responsibility"],
             "Requirement and responsibility bullet evidence is weak.",
             f"semantic={semantic_match.semantic_requirement_match_score}, responsibility={semantic_match.responsibility_match_score}",
         )
-    if len(semantic_match.requirement_matches) >= 3 and semantic_match.strong_bullet_match_count == 0:
+    if requirement_match_count >= 3 and semantic_match.strong_bullet_match_count == 0:
         add_cap(
             "no_strong_bullet_evidence",
             caps["no_strong_bullet_evidence"],
@@ -658,6 +667,7 @@ def _confidence_score(
         "evidence_coverage": round(max(0.0, min(1.0, max(evidence_coverage, matcher_factors.get("evidence_coverage", 0.0)))), 2),
         "semantic_coverage": round(max(0.0, min(1.0, semantic_coverage)), 2),
         "signal_density": round(max(0.0, min(1.0, signal_density)), 2),
+        "semantic_model_support": 1.0 if semantic_match.semantic_model_available else 0.45,
     }
 
     confidence = (
@@ -668,6 +678,8 @@ def _confidence_score(
         + 0.10 * factors["signal_density"]
     )
     confidence -= shallow_ratio * 0.10
+    if not semantic_match.semantic_model_available and requirement_count >= 3:
+        confidence -= 0.10
     if job_match_score < 35 and jd_signal_count < 4:
         confidence -= 0.08
     if requirement_count < 2 or resume_bullet_count < 2:

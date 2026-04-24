@@ -1,3 +1,4 @@
+import ProfilePhotoCrop from "../../components/ProfilePhotoCrop";
 import { ContactList, TemplateSection } from "../shared";
 import { getSectionTitle } from "../helpers";
 import { renderRichText } from "../../richText";
@@ -34,14 +35,31 @@ function SidebarEducation({ education }) {
 function SidebarSkills({ skills }) {
   if (!skills.length) return null;
 
+  const groupedSkills = skills
+    .map((group, index) => {
+      const name = String(group?.name || "").trim();
+      const items = Array.from(new Set((group?.items || []).map((item) => String(item || "").trim()).filter(Boolean)));
+      const fallbackLabel = skills.length === 1 ? "Core Skills" : `Skill Group ${index + 1}`;
+
+      if (!name && !items.length) return null;
+
+      return {
+        label: name || fallbackLabel,
+        value: items.length ? items.join(", ") : name,
+      };
+    })
+    .filter(Boolean);
+
+  if (!groupedSkills.length) return null;
+
   return (
     <TemplateSection title="Key Skills" variant="banner-sidebar" className="profile-banner-sidebar-section">
       <div className="profile-banner-skill-list">
-        {skills.flatMap((group) => group.items.length ? group.items : [group.name]).filter(Boolean).map((skill, index) => (
-          <p className="profile-banner-skill" key={`${skill}-${index}`}>
-            <span className="profile-banner-dot">{"\u2022"}</span>
-            <span>{skill}</span>
-          </p>
+        {groupedSkills.map((group, index) => (
+          <article className="profile-banner-skill-group" key={`${group.label}-${index}`}>
+            <strong>{group.label}</strong>
+            <p>{group.value}</p>
+          </article>
         ))}
       </div>
     </TemplateSection>
@@ -137,12 +155,24 @@ function CertificationsSection({ items }) {
 
 export default function ProfileBanner({ data }) {
   const mainSections = data.orderedSections.filter((key) => !["summary", "skills", "education"].includes(key));
+  const hasPhoto = Boolean(data.basics.photo);
+  const photoOffset = Number(data.basics.photo_offset_y || 0);
 
   return (
     <div className="resume-template profile-banner">
       <header className="profile-banner-hero">
         <div className="profile-banner-avatar" aria-hidden="true">
-          <span>{getInitials(data.basics.full_name)}</span>
+          {hasPhoto ? (
+            <ProfilePhotoCrop
+              className="profile-banner-avatar-photo"
+              src={data.basics.photo}
+              alt={`${data.basics.full_name || "Resume"} profile`}
+              size={178}
+              offsetY={photoOffset}
+            />
+          ) : (
+            <span>{getInitials(data.basics.full_name)}</span>
+          )}
         </div>
         <div className="profile-banner-hero-copy">
           <h1>{data.basics.full_name}</h1>

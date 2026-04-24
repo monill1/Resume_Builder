@@ -8,6 +8,8 @@ export const sampleResume = {
     linkedin: "https://www.linkedin.com/in/monil-panchal/",
     github: "https://github.com/monill1",
     website: "",
+    photo: "",
+    photo_offset_y: 0,
     summary:
       "Results-driven AI/ML, backend, and data analytics engineer with hands-on experience building scalable APIs, analytics workflows, and machine-learning solutions. Strong in Python, FastAPI, Django, SQL, data visualization, and ATS-friendly resume writing.",
   },

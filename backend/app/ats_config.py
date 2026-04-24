@@ -281,6 +281,7 @@ ATS_SCORING_CONFIG = {
         "section_weight": 0.24,
     },
     "calibration_caps": {
+        "semantic_model_unavailable": 74,
         "one_required_hard_skill_missing": 78,
         "multiple_required_hard_skills_missing": 65,
         "core_role_missing": 64,

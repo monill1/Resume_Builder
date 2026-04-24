@@ -768,10 +768,10 @@
   height: 178px;
   display: grid;
   place-items: center;
-  border: 7px solid rgba(255, 255, 255, 0.92);
   border-radius: 999px;
+  overflow: hidden;
   background: var(--template-accent-soft, #fce7e8);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.4);
+  box-shadow: 0 14px 32px rgba(76, 18, 27, 0.18);
 }
 
 .profile-banner-avatar span {
@@ -784,6 +784,14 @@
   color: var(--template-accent-deep, #b13f45);
   font-size: 42px;
   font-weight: 800;
+}
+
+.profile-banner-avatar-photo {
+  border-radius: 999px;
+  display: block;
+  max-width: none;
+  background: transparent;
+  transition: transform 160ms ease;
 }
 
 .profile-banner-hero-copy {
@@ -912,22 +920,38 @@
 
 .profile-banner-skill-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
-.profile-banner-skill,
+.profile-banner-skill-group {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(30, 89, 103, 0.14);
+}
+
+.profile-banner-skill-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.profile-banner-skill-group strong {
+  color: #1e5967;
+  font-size: 11.4px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.profile-banner-skill-group p,
 .profile-banner-bullet,
 .profile-banner-cert {
-  display: grid;
-  grid-template-columns: 13px minmax(0, 1fr);
-  gap: 8px;
   margin: 0;
   color: #23222a;
   font-size: 12.2px;
   line-height: 1.38;
 }
 
-.profile-banner-dot,
 .profile-banner-bullet > span:first-child,
 .profile-banner-cert > span:first-child {
   color: #111111;

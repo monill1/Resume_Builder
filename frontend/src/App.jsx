@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "./config";
+import ProfilePhotoCrop from "./components/ProfilePhotoCrop";
 import { stripRichText } from "./richText";
 import ResumePreviewPanel from "./resumeTemplates/ResumePreview";
 import { DEFAULT_TEMPLATE_ID, RESUME_TEMPLATES, getTemplateMeta } from "./resumeTemplates/templateMeta";
 import { sampleResume } from "./sampleResume";
-import { normalizeLayoutOptions, normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABELS } from "./resumeData";
+import { normalizeLayoutOptions, normalizePhotoDataUrl, normalizePhotoOffset, normalizeResumeData, normalizeSectionOrder, normalizeUrl, SECTION_LABELS } from "./resumeData";
 
 const RESUME_DRAFT_KEY = "ats-resume-builder-draft";
 const RESUME_PROFILE_DRAFT_PREFIX = "ats-resume-builder-profile-draft:";
@@ -68,6 +69,7 @@ const RESUME_EXPORT_RULES = [
 ];
 const BOLD_MARKER = "**";
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+const PROFILE_PHOTO_MAX_BYTES = 4 * 1024 * 1024;
 const RAZORPAY_CHECKOUT_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
 
 function loadRazorpayCheckout() {
@@ -219,6 +221,69 @@ function parseCommaSeparatedSkills(value) {
 
 function formatCommaSeparatedSkills(items) {
   return (items || []).map((item) => String(item || "").trim()).filter(Boolean).join(", ");
+}
+
+function getAvatarInitials(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+  return initials || "CV";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read the selected image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to process the selected image."));
+    image.src = src;
+  });
+}
+
+async function buildProfilePhotoDataUrl(file) {
+  if (!file) {
+    return "";
+  }
+
+  if (!String(file.type || "").startsWith("image/")) {
+    throw new Error("Please upload an image file for the profile photo.");
+  }
+
+  if (file.size > PROFILE_PHOTO_MAX_BYTES) {
+    throw new Error("Profile photo must be 4 MB or smaller.");
+  }
+
+  const source = await readFileAsDataUrl(file);
+  const image = await loadImageElement(source);
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const longestSide = Math.max(width, height);
+  const scale = longestSide > 1200 ? 1200 / longestSide : 1;
+  const targetWidth = Math.max(1, Math.round(width * scale));
+  const targetHeight = Math.max(1, Math.round(height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to prepare the profile photo.");
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.9);
 }
 
 function getDownloadFilename(headers, fallbackFilename) {
@@ -863,6 +928,35 @@ function App() {
     setResume((current) => ({ ...current, basics: { ...current.basics, [key]: value } }));
   };
 
+  const handleProfilePhotoUpload = async (file) => {
+    try {
+      const photo = await buildProfilePhotoDataUrl(file);
+      setResume((current) => ({
+        ...current,
+        basics: {
+          ...current.basics,
+          photo,
+          photo_offset_y: 0,
+        },
+      }));
+      setStatus("Profile photo added. The Profile Banner preview and PDF will use it instead of initials.");
+    } catch (error) {
+      setStatus(`Unable to add profile photo: ${error.message}`);
+    }
+  };
+
+  const clearProfilePhoto = () => {
+    setResume((current) => ({
+      ...current,
+      basics: {
+        ...current.basics,
+        photo: "",
+        photo_offset_y: 0,
+      },
+    }));
+    setStatus("Profile photo removed. The Profile Banner will fall back to initials.");
+  };
+
   const updateLayoutOption = (key, value) => {
     setResume((current) => ({
       ...current,
@@ -963,6 +1057,8 @@ function App() {
       linkedin: normalizeUrl(resume.basics.linkedin) || null,
       github: normalizeUrl(resume.basics.github) || null,
       website: normalizeUrl(resume.basics.website) || null,
+      photo: normalizePhotoDataUrl(resume.basics.photo) || null,
+      photo_offset_y: normalizePhotoOffset(resume.basics.photo_offset_y),
     },
     skills: resume.skills
       .map((item) => ({
@@ -1234,7 +1330,14 @@ function App() {
       }
 
       const data = await response.json();
-      const normalizedOptimizedResume = normalizeResumeData(data.optimized_resume);
+      const normalizedOptimizedResume = normalizeResumeData({
+        ...data.optimized_resume,
+        basics: {
+          ...(data.optimized_resume?.basics || {}),
+          photo: data.optimized_resume?.basics?.photo || resume.basics.photo || "",
+          photo_offset_y: data.optimized_resume?.basics?.photo_offset_y ?? resume.basics.photo_offset_y ?? 0,
+        },
+      });
       const normalizedCurrentResume = normalizeResumeData(structuredClone(resume));
       const resumeChanged = JSON.stringify(normalizedOptimizedResume) !== JSON.stringify(normalizedCurrentResume);
       setResume(normalizedOptimizedResume);
@@ -1407,6 +1510,15 @@ function App() {
               <Field label="GitHub URL" value={resume.basics.github || ""} onChange={(value) => updateBasics("github", value)} spellCheck={false} />
               <Field label="Website URL" value={resume.basics.website || ""} onChange={(value) => updateBasics("website", value)} spellCheck={false} />
             </div>
+            <PhotoUploadField
+              label="Profile Photo"
+              value={resume.basics.photo}
+              fullName={resume.basics.full_name}
+              photoOffset={resume.basics.photo_offset_y}
+              onPhotoOffsetChange={(value) => updateBasics("photo_offset_y", normalizePhotoOffset(value))}
+              onSelectFile={handleProfilePhotoUpload}
+              onRemove={clearProfilePhoto}
+            />
             <TextArea label="Professional Summary" value={resume.basics.summary} onChange={(value) => updateBasics("summary", value)} rows={5} enableBold />
             <p className="field-help">Spelling suggestions appear automatically from your browser while typing. Select text and use `B` or `Ctrl+B` to bold summary and bullet text.</p>
 
@@ -2444,6 +2556,70 @@ function Field({ label, value, onChange, disabled = false, spellCheck = true }) 
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
+  );
+}
+
+function PhotoUploadField({ label, value, fullName, photoOffset, onPhotoOffsetChange, onSelectFile, onRemove }) {
+  const inputRef = useRef(null);
+
+  return (
+    <div className="photo-field">
+      <div className="photo-field-media">
+        <div className="photo-field-preview" aria-hidden="true">
+          {value ? <ProfilePhotoCrop src={value} alt="" size={88} offsetY={photoOffset} /> : <span>{getAvatarInitials(fullName)}</span>}
+        </div>
+        <div className="photo-field-copy">
+          <strong>{label}</strong>
+          <p>Upload a headshot for the `Profile Banner` template. You can move it up or down so the preview and PDF show the best framing.</p>
+        </div>
+      </div>
+
+      <div className="photo-field-actions">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="photo-field-input"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) {
+              onSelectFile(file);
+            }
+            event.target.value = "";
+          }}
+        />
+        <Button variant="secondary" size="small" onClick={() => inputRef.current?.click()}>
+          {value ? "Change Photo" : "Upload Photo"}
+        </Button>
+        {value ? (
+          <Button variant="ghost" size="small" className="photo-field-remove" onClick={onRemove}>
+            Remove
+          </Button>
+        ) : null}
+      </div>
+
+      {value ? (
+        <label className="photo-position-field">
+          <div className="photo-position-head">
+            <span>Photo Vertical Position</span>
+            <strong>{photoOffset > 0 ? `+${photoOffset}` : photoOffset}</strong>
+          </div>
+          <input
+            type="range"
+            min="-40"
+            max="40"
+            step="1"
+            value={photoOffset}
+            onChange={(event) => onPhotoOffsetChange(Number(event.target.value))}
+          />
+          <div className="photo-position-scale" aria-hidden="true">
+            <span>Up</span>
+            <span>Center</span>
+            <span>Down</span>
+          </div>
+        </label>
+      ) : null}
+    </div>
   );
 }
 

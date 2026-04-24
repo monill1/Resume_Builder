@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from functools import lru_cache
 from html import escape
 from io import BytesIO
@@ -30,6 +32,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 from PIL import Image
+from PIL import ImageDraw
 
 from .models import ResumePayload
 from .rich_text import to_reportlab_markup
@@ -68,6 +71,36 @@ def _safe_items(items: list[str]) -> list[str]:
 
 def _normalize_inline_paragraph_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _profile_photo_image(photo_data: str | None, offset_y: int = 0, size: int = 600) -> ImageReader | None:
+    if not isinstance(photo_data, str) or not photo_data.startswith("data:image/"):
+        return None
+
+    try:
+        _, encoded = photo_data.split(",", 1)
+        image_bytes = base64.b64decode(encoded)
+        image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+    except (ValueError, binascii.Error, OSError):
+        return None
+
+    crop = min(image.width, image.height)
+    left = (image.width - crop) // 2
+    if image.height > image.width:
+        overflow = image.height - crop
+        centered_top = overflow / 2
+        top = int(centered_top + ((max(-40, min(40, offset_y)) / 40) * (overflow / 2)))
+    else:
+        top = (image.height - crop) // 2
+    top = max(0, min(top, image.height - crop))
+    avatar = image.crop((left, top, left + crop, top + crop)).resize((size, size), Image.LANCZOS)
+
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=255)
+    avatar.putalpha(mask)
+
+    return ImageReader(avatar)
 
 
 @lru_cache(maxsize=16)
@@ -666,6 +699,25 @@ def _build_styles(config: dict):
     )
     styles.add(
         ParagraphStyle(
+            name="SidebarSkillLabel",
+            parent=styles["SidebarBodyBold"],
+            fontSize=config.get("sidebar_skill_label_size", 8.0),
+            leading=config.get("sidebar_skill_label_leading", 9.2),
+            textColor=config.get("sidebar_title_color", accent),
+            spaceAfter=1,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SidebarSkillValue",
+            parent=styles["SidebarBody"],
+            fontSize=config.get("sidebar_skill_value_size", config.get("sidebar_body_size", 8.35)),
+            leading=config.get("sidebar_skill_value_leading", config.get("sidebar_body_leading", 10.2)),
+            spaceAfter=0,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
             name="SidebarMeta",
             fontName="Helvetica",
             fontSize=config.get("sidebar_meta_size", 7.8),
@@ -1180,10 +1232,20 @@ def _profile_banner_sidebar_education_block(item, styles) -> list:
 
 def _profile_banner_sidebar_skill_rows(resume: ResumePayload, styles) -> list:
     rows = []
-    for item in resume.skills:
-        skill_items = _safe_items(item.items) or ([item.name.strip()] if item.name.strip() else [])
-        for skill in skill_items:
-            rows.append(Paragraph(escape(skill), styles["SidebarBullet"], bulletText="\u2022"))
+    safe_groups = [item for item in resume.skills if item.name.strip() or _safe_items(item.items)]
+
+    for index, item in enumerate(safe_groups):
+        label = item.name.strip() or ("Core Skills" if len(safe_groups) == 1 else f"Skill Group {index + 1}")
+        skill_items = list(dict.fromkeys(_safe_items(item.items)))
+        value = ", ".join(skill_items) if skill_items else label
+
+        rows.append(Paragraph(escape(label.upper()), styles["SidebarSkillLabel"]))
+        rows.append(Paragraph(escape(value), styles["SidebarSkillValue"]))
+        if index < len(safe_groups) - 1:
+            rows.append(Spacer(1, 3))
+            rows.append(HRFlowable(width="100%", thickness=0.55, color=colors.HexColor("#D8E3E6")))
+            rows.append(Spacer(1, 7))
+
     return rows
 
 
@@ -1236,13 +1298,27 @@ def _draw_profile_banner_header(canvas, doc, resume: ResumePayload, styles, conf
     avatar_radius = config.get("avatar_radius", 0.68) * inch
     avatar_x = doc.leftMargin + avatar_radius + 0.02 * inch
     avatar_y = banner_y + (banner_height / 2)
-    canvas.setFillColor(config.get("avatar_bg", colors.white))
-    canvas.setStrokeColor(colors.white)
-    canvas.setLineWidth(5)
-    canvas.circle(avatar_x, avatar_y, avatar_radius, fill=1, stroke=1)
-    canvas.setFillColor(config.get("avatar_text", accent))
-    canvas.setFont("Helvetica-Bold", 25)
-    canvas.drawCentredString(avatar_x, avatar_y - 8, _profile_banner_initials(resume.basics.full_name))
+    profile_photo = _profile_photo_image(
+        getattr(resume.basics, "photo", None),
+        getattr(resume.basics, "photo_offset_y", 0),
+    )
+    if profile_photo is not None:
+        canvas.drawImage(
+            profile_photo,
+            avatar_x - avatar_radius,
+            avatar_y - avatar_radius,
+            width=avatar_radius * 2,
+            height=avatar_radius * 2,
+            mask="auto",
+        )
+    else:
+        canvas.setFillColor(config.get("avatar_bg", colors.white))
+        canvas.setStrokeColor(colors.white)
+        canvas.setLineWidth(5)
+        canvas.circle(avatar_x, avatar_y, avatar_radius, fill=1, stroke=1)
+        canvas.setFillColor(config.get("avatar_text", accent))
+        canvas.setFont("Helvetica-Bold", 25)
+        canvas.drawCentredString(avatar_x, avatar_y - 8, _profile_banner_initials(resume.basics.full_name))
     canvas.restoreState()
 
     text_x = avatar_x + avatar_radius + 0.4 * inch
@@ -1329,15 +1405,19 @@ def _build_profile_banner_pdf(resume: ResumePayload, config: dict) -> bytes:
 
     banner_height = config.get("banner_height", 2.05) * inch
     sidebar_width = config.get("sidebar_width", 2.18) * inch
-    column_gap = config.get("column_gap", 0.26) * inch
-    first_body_height = letter[1] - doc.topMargin - doc.bottomMargin - banner_height
+    column_gap = config.get("column_gap", 0.0) * inch
+    sidebar_left_padding = config.get("sidebar_inner_left", 0.18) * inch
+    sidebar_right_padding = config.get("sidebar_inner_right", 0.2) * inch
+    main_left_padding = config.get("main_inner_left", 0.28) * inch
+    main_right_padding = config.get("main_inner_right", 0.08) * inch
+    first_body_height = (letter[1] - banner_height) - doc.bottomMargin
     first_main = Frame(
         doc.leftMargin + sidebar_width + column_gap,
         doc.bottomMargin,
         doc.width - sidebar_width - column_gap,
         first_body_height,
-        leftPadding=0,
-        rightPadding=0,
+        leftPadding=main_left_padding,
+        rightPadding=main_right_padding,
         topPadding=18,
         bottomPadding=0,
         id="profile-banner-main",
@@ -1347,8 +1427,8 @@ def _build_profile_banner_pdf(resume: ResumePayload, config: dict) -> bytes:
         doc.bottomMargin,
         doc.width - sidebar_width - column_gap,
         doc.height,
-        leftPadding=0,
-        rightPadding=0,
+        leftPadding=main_left_padding,
+        rightPadding=main_right_padding,
         topPadding=0,
         bottomPadding=0,
         id="profile-banner-later",
@@ -1357,7 +1437,7 @@ def _build_profile_banner_pdf(resume: ResumePayload, config: dict) -> bytes:
     def draw_sidebar_panel(canvas, _doc, height: float) -> None:
         canvas.saveState()
         canvas.setFillColor(config.get("sidebar_bg", colors.HexColor("#F3F3F4")))
-        canvas.rect(_doc.leftMargin - 4, _doc.bottomMargin, sidebar_width + 8, height, fill=1, stroke=0)
+        canvas.rect(0, _doc.bottomMargin, _doc.leftMargin + sidebar_width, height, fill=1, stroke=0)
         canvas.restoreState()
 
     def draw_first_page(canvas, _doc) -> None:
@@ -1368,8 +1448,8 @@ def _build_profile_banner_pdf(resume: ResumePayload, config: dict) -> bytes:
             _doc.bottomMargin,
             sidebar_width,
             first_body_height,
-            leftPadding=0,
-            rightPadding=0,
+            leftPadding=sidebar_left_padding,
+            rightPadding=sidebar_right_padding,
             topPadding=18,
             bottomPadding=0,
             id="profile-banner-sidebar",
@@ -1549,7 +1629,11 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str, secti
                 "banner_height": 2.05,
                 "avatar_radius": 0.68,
                 "sidebar_width": 2.18,
-                "column_gap": 0.26,
+                "column_gap": 0.0,
+                "sidebar_inner_left": 0.18,
+                "sidebar_inner_right": 0.2,
+                "main_inner_left": 0.28,
+                "main_inner_right": 0.08,
                 "sidebar_bg": colors.HexColor("#F3F3F4"),
                 "sidebar_text": colors.HexColor("#23222A"),
                 "sidebar_muted": colors.HexColor("#4B5563"),
@@ -1561,6 +1645,10 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str, secti
                 "sidebar_contact_leading": 10.5,
                 "sidebar_title_size": 9.6,
                 "sidebar_title_leading": 11,
+                "sidebar_skill_label_size": 8.15,
+                "sidebar_skill_label_leading": 9.3,
+                "sidebar_skill_value_size": 8.55,
+                "sidebar_skill_value_leading": 10.7,
                 "section_variant": "stacked",
                 "uppercase_sections": True,
                 "section_titles_without_rule": ["Professional Experience", "Projects", "Certifications", "Certification"],

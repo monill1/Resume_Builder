@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from backend.app.ats import analyze_resume_against_job, prepare_job_source
+from backend.app.ats_config import ATS_SCORING_CONFIG
 from backend.app.ats_optimizer import optimize_resume_against_job
 from backend.app.ats_normalization import best_match_type
 from backend.app.ats_samples import ATS_SAMPLE_CASES
@@ -338,6 +340,16 @@ Responsibilities:
 
         self.assertGreaterEqual(result.confidence_score, 0.72)
         self.assertGreaterEqual(result.confidence_factors["resume_parse_quality"], 0.9)
+
+    @patch("backend.app.services.semantic_matcher.get_semantic_model", side_effect=RuntimeError("semantic model unavailable"))
+    def test_semantic_fallback_caps_score_conservatively(self, _model) -> None:
+        result = analyze_case("backend_developer")
+        cap_names = {item["cap_name"] for item in result.score_caps_applied}
+
+        self.assertFalse(result.semantic_model_available)
+        self.assertEqual(result.semantic_model_name, "local-tfidf-semantic-fallback")
+        self.assertIn("semantic_model_unavailable", cap_names)
+        self.assertLessEqual(result.job_match_score, ATS_SCORING_CONFIG["calibration_caps"]["semantic_model_unavailable"])
         self.assertGreaterEqual(result.confidence_factors["signal_density"], 0.9)
 
     def test_entry_level_and_senior_jobs_select_different_weight_profiles(self) -> None:

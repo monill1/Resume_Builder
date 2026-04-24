@@ -20,8 +20,24 @@ export const normalizeLayoutOptions = (options = {}) => ({
   executive_certifications_in_sidebar: Boolean(options?.executive_certifications_in_sidebar),
 });
 
+export const normalizePhotoDataUrl = (value) => {
+  const trimmed = String(value || "").trim();
+  return trimmed.startsWith("data:image/") ? trimmed : "";
+};
+
+export const normalizePhotoOffset = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(-40, Math.min(40, Math.round(parsed)));
+};
+
 export const normalizeResumeData = (data) => ({
   ...data,
+  basics: {
+    ...(data?.basics || {}),
+    photo: normalizePhotoDataUrl(data?.basics?.photo),
+    photo_offset_y: normalizePhotoOffset(data?.basics?.photo_offset_y),
+  },
   layout_options: normalizeLayoutOptions(data?.layout_options),
   section_order: normalizeSectionOrder(data?.section_order),
 });

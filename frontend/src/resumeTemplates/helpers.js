@@ -37,6 +37,8 @@ export function buildResumeViewModel(resume) {
     linkedin: resume?.basics?.linkedin ? normalizeUrl(resume.basics.linkedin) : "",
     github: resume?.basics?.github ? normalizeUrl(resume.basics.github) : "",
     website: resume?.basics?.website ? normalizeUrl(resume.basics.website) : "",
+    photo: String(resume?.basics?.photo || "").trim(),
+    photo_offset_y: Number.isFinite(Number(resume?.basics?.photo_offset_y)) ? Number(resume.basics.photo_offset_y) : 0,
     summary: resume?.basics?.summary || "",
   };
 
