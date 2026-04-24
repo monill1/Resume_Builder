@@ -1137,13 +1137,23 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     styles = _build_styles(config)
     sidebar_width = config.get("sidebar_width", 2.0) * inch
     column_gap = config.get("column_gap", 0.26) * inch
+    sidebar_left_padding = config.get("sidebar_inner_left", 0.0) * inch
+    sidebar_right_padding = config.get("sidebar_inner_right", 0.0) * inch
+    main_left_padding = config.get("main_inner_left", 0.0) * inch
+    main_right_padding = config.get("main_inner_right", 0.0) * inch
+    sidebar_full_bleed = config.get("sidebar_full_bleed", False)
+    sidebar_frame_x = 0 if sidebar_full_bleed else doc.leftMargin
+    sidebar_frame_width = (doc.leftMargin + sidebar_width) if sidebar_full_bleed else sidebar_width
+    main_frame_width = doc.width - sidebar_width - column_gap
+    main_content_width = max(0, main_frame_width - main_left_padding - main_right_padding)
+    sidebar_content_width = max(0, sidebar_frame_width - sidebar_left_padding - sidebar_right_padding)
     first_main = Frame(
         doc.leftMargin + sidebar_width + column_gap,
         doc.bottomMargin,
-        doc.width - sidebar_width - column_gap,
+        main_frame_width,
         doc.height,
-        leftPadding=0,
-        rightPadding=0,
+        leftPadding=main_left_padding,
+        rightPadding=main_right_padding,
         topPadding=0,
         bottomPadding=0,
         id="main",
@@ -1151,10 +1161,10 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     later_frame = Frame(
         doc.leftMargin + sidebar_width + column_gap,
         doc.bottomMargin,
-        doc.width - sidebar_width - column_gap,
+        main_frame_width,
         doc.height,
-        leftPadding=0,
-        rightPadding=0,
+        leftPadding=main_left_padding,
+        rightPadding=main_right_padding,
         topPadding=0,
         bottomPadding=0,
         id="later",
@@ -1163,12 +1173,14 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     def draw_sidebar_panel(canvas, _doc):
         if config.get("sidebar_bg"):
             sidebar_bleed = config.get("sidebar_bleed", 12)
+            panel_x = 0 if sidebar_full_bleed else (_doc.leftMargin - sidebar_bleed)
+            panel_width = (_doc.leftMargin + sidebar_width) if sidebar_full_bleed else (sidebar_width + sidebar_bleed)
             canvas.saveState()
             canvas.setFillColor(config["sidebar_bg"])
             canvas.rect(
-                _doc.leftMargin - sidebar_bleed,
+                panel_x,
                 _doc.bottomMargin - sidebar_bleed,
-                sidebar_width + sidebar_bleed,
+                panel_width,
                 _doc.height + (sidebar_bleed * 2),
                 fill=1,
                 stroke=0,
@@ -1179,17 +1191,17 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
         draw_sidebar_panel(canvas, _doc)
 
         sidebar_frame = Frame(
-            _doc.leftMargin,
+            sidebar_frame_x,
             _doc.bottomMargin,
-            sidebar_width,
+            sidebar_frame_width,
             _doc.height,
-            leftPadding=0,
-            rightPadding=0,
+            leftPadding=sidebar_left_padding,
+            rightPadding=sidebar_right_padding,
             topPadding=0,
             bottomPadding=0,
             id="sidebar-repeat",
         )
-        sidebar_story = _build_sidebar_story(resume, sidebar_width, styles, config)
+        sidebar_story = _build_sidebar_story(resume, sidebar_content_width, styles, config)
         sidebar_frame.addFromList(sidebar_story, canvas)
 
     def draw_later_page(canvas, _doc):
@@ -1205,7 +1217,7 @@ def _build_sidebar_pdf(resume: ResumePayload, config: dict) -> bytes:
     main_story = [NextPageTemplate("later"), Spacer(1, 2)]
 
     main_keys = [key for key in _normalized_section_order(getattr(resume, "section_order", None)) if key not in config.get("sidebar_keys", [])]
-    _build_ordered_story(main_story, resume, doc.width - sidebar_width - column_gap, styles, config, main_keys)
+    _build_ordered_story(main_story, resume, main_content_width, styles, config, main_keys)
 
     doc.build(main_story)
     return buffer.getvalue()
@@ -1540,17 +1552,18 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str, secti
                 "item_meta_size": 7.95,
                 "item_meta_leading": 9.7,
                 "bullet_space_after": 0.35,
-                "left_margin": 0.44,
-                "right_margin": 0.44,
-                "top_margin": 0.14,
+                "left_margin": 0.38,
+                "right_margin": 0.34,
+                "top_margin": 0.12,
                 "bottom_margin": 0.1,
-                "sidebar_width": 2.08,
-                "column_gap": 0.22,
+                "sidebar_width": 1.96,
+                "column_gap": 0.0,
+                "sidebar_full_bleed": True,
                 "sidebar_bg": override_palette["accent_surface_strong"] if override_palette else colors.HexColor("#F7F2EA"),
                 "sidebar_text": colors.HexColor("#334155"),
                 "sidebar_muted": colors.HexColor("#5F6B79"),
                 "sidebar_title_color": override_palette["accent_deep"] if override_palette else colors.HexColor("#8A6430"),
-                "sidebar_kicker_text": "EXECUTIVE PROFILE",
+                "sidebar_kicker_text": "",
                 "sidebar_kicker_size": 8.45,
                 "sidebar_kicker_leading": 9.6,
                 "sidebar_kicker_gap_after": 8,
@@ -1560,13 +1573,17 @@ def build_additional_template_pdf(resume: ResumePayload, template_id: str, secti
                 "sidebar_divider_thickness": 0.75,
                 "sidebar_divider_color": override_palette["accent_line"] if override_palette else colors.HexColor("#E5DCCD"),
                 "sidebar_divider_gap_after": 9,
-                "sidebar_contact_size": 7.8,
-                "sidebar_contact_leading": 9.7,
-                "sidebar_body_size": 7.65,
-                "sidebar_body_leading": 9.2,
+                "sidebar_inner_left": 0.16,
+                "sidebar_inner_right": 0.12,
+                "main_inner_left": 0.24,
+                "main_inner_right": 0.06,
+                "sidebar_contact_size": 8.05,
+                "sidebar_contact_leading": 10.0,
+                "sidebar_body_size": 7.95,
+                "sidebar_body_leading": 9.55,
                 "sidebar_skill_space_after": 3.5,
-                "sidebar_title_size": 9.85,
-                "sidebar_title_leading": 10.9,
+                "sidebar_title_size": 10.05,
+                "sidebar_title_leading": 11.1,
                 "section_label_width": 1.55,
                 "section_variant": "stacked",
                 "uppercase_sections": True,
