@@ -2906,41 +2906,121 @@ function SkillColumn({ title, icon, items, emptyText }) {
 
 function buildSimpleFixes(result, optimization) {
   const fixes = [];
-  const addFix = (problem, fix, icon = "warning", rank = 3) => {
+  const addFix = (problem, fix, icon = "warning", rank = 3, dedupeKey = "") => {
     const cleanedProblem = shortText(problem, 76);
-    const cleanedFix = shortText(fix, 110);
+    const cleanedFix = cleanDisplayText(fix);
     if (!cleanedProblem || !cleanedFix) return;
-    if (fixes.some((item) => item.problem.toLowerCase() === cleanedProblem.toLowerCase())) return;
-    fixes.push({ problem: cleanedProblem, fix: cleanedFix, icon, rank });
+    const normalizedKey = cleanDisplayText(dedupeKey || cleanedProblem).toLowerCase();
+    if (fixes.some((item) => item.key === normalizedKey || item.problem.toLowerCase() === cleanedProblem.toLowerCase())) return;
+    fixes.push({ problem: cleanedProblem, fix: cleanedFix, icon, rank, key: normalizedKey });
+  };
+
+  const classifySkillKeyword = (keyword) => {
+    const normalized = cleanDisplayText(keyword).toLowerCase();
+    if (["tensorflow", "pytorch", "keras", "scikit-learn", "sklearn"].includes(normalized)) return "ml-framework";
+    if (["langchain", "langgraph", "rag", "vector db", "vectordb", "pinecone", "chromadb", "faiss"].includes(normalized)) return "llm-stack";
+    if (["azure", "aws", "gcp"].includes(normalized)) return "cloud";
+    if (["docker", "kubernetes", "ci/cd", "jenkins", "github actions", "devops"].includes(normalized)) return "platform";
+    if (["a/b testing", "ab testing", "experimentation"].includes(normalized)) return "experimentation";
+    if (["sql", "power bi", "tableau", "excel", "pandas", "numpy"].includes(normalized)) return "data";
+    if (["react", "javascript", "typescript", "node.js", "node", "rest apis", "api", "microservices", "fastapi", "django"].includes(normalized)) return "engineering";
+    return "general";
+  };
+
+  const buildSkillFixCopy = (keyword, required, jobTitle) => {
+    if (!keyword) return "";
+    const roleLabel = cleanDisplayText(jobTitle || "the target role");
+    const skillType = classifySkillKeyword(keyword);
+
+    if (skillType === "cloud") {
+      return required
+        ? `Show where you used ${keyword} in delivery work for ${roleLabel}. A stronger fix is one bullet that names the cloud task, the system you supported, and the result.`
+        : `If ${keyword} is real experience, weave it into one project or work bullet instead of listing it by itself. Mention what you deployed, migrated, or automated.`;
+    }
+
+    if (skillType === "platform") {
+      return required
+        ? `Recruiters will look for hands-on evidence here. Add ${keyword} only if you used it, then point to one delivery bullet showing pipeline, deployment, or release ownership.`
+        : `Strengthen this by tying ${keyword} to shipping work. One concise bullet about automation, deployment, or environment setup will read better than a skills-only mention.`;
+    }
+
+    if (skillType === "ml-framework") {
+      return required
+        ? `For ${keyword}, the best improvement is proof of application. Add one bullet that says what model or workflow you built, why ${keyword} was used, and what outcome it improved.`
+        : `If ${keyword} is part of your actual toolkit, mention it in a project with a concrete ML task such as training, tuning, evaluation, or inference.`;
+    }
+
+    if (skillType === "llm-stack") {
+      return required
+        ? `This is more convincing when it appears in context. Show ${keyword} in one bullet tied to an agent, retrieval, orchestration, or LLM workflow you actually built.`
+        : `Only add ${keyword} if you used it in a real build. The strongest version is a bullet that explains the use case, architecture piece, and practical outcome.`;
+    }
+
+    if (skillType === "experimentation") {
+      return `Rather than just naming ${keyword}, show decision-making evidence. Add one bullet about the hypothesis, metric, and change you validated through experimentation.`;
+    }
+
+    if (skillType === "data") {
+      return `Make ${keyword} visible through output, not only through a keyword mention. Add a bullet that ties it to analysis, dashboarding, reporting, or measurable insight.`;
+    }
+
+    if (skillType === "engineering") {
+      return `A clean fix is to connect ${keyword} to shipped work. Add one bullet that shows what you built with it, where it fit in the stack, and the result it delivered.`;
+    }
+
+    return required
+      ? `If you genuinely have ${keyword}, add it only with proof. One focused bullet showing where you used it and what changed will make this gap less risky.`
+      : `If ${keyword} is relevant experience, support it with one concrete example instead of a standalone keyword so the match feels credible.`;
+  };
+
+  const skillFixCopy = (keyword, required) => {
+    return buildSkillFixCopy(keyword, required, result.job_title);
+  };
+
+  const criticalGapFixCopy = (item) => {
+    const title = cleanDisplayText(item?.title).toLowerCase();
+    if (title.includes("experience level below")) {
+      return "Counter this by foregrounding depth over duration. Lead with your strongest production work, ownership, and measurable outcomes so the reader sees seniority in evidence, not just in years.";
+    }
+    if (title.includes("core role alignment")) {
+      return "Tighten alignment in the headline, summary, and first few bullets. The target role should be obvious within a quick scan, and your top evidence should reinforce that direction.";
+    }
+    return item?.suggested_edit || item?.impact || item?.details || "";
   };
 
   (result.missing_required_skills ?? []).forEach((item) => {
-    addFix(`Missing required skill: ${item.keyword}`, `Add ${item.keyword} to skills and prove it in one work or project bullet if true.`, "cross", 0);
+    const keyword = cleanDisplayText(item.keyword);
+    addFix(`Missing required skill: ${keyword}`, skillFixCopy(keyword, true), "cross", 0, `missing-skill:${keyword.toLowerCase()}`);
   });
   (result.missing_keywords ?? [])
     .filter((item) => ["high", "medium"].includes(String(item.importance || "").toLowerCase()))
     .forEach((item) => {
+      const keyword = cleanDisplayText(item.keyword);
       const highPriority = item.importance === "high";
-      addFix(`Missing skill: ${item.keyword}`, `Mention ${item.keyword} and add one real evidence bullet if accurate.`, highPriority ? "cross" : "warning", highPriority ? 1 : 2);
+      addFix(`Missing skill: ${keyword}`, skillFixCopy(keyword, false), highPriority ? "cross" : "warning", highPriority ? 1 : 2, `missing-skill:${keyword.toLowerCase()}`);
     });
   (result.critical_gaps ?? []).forEach((item) => {
-    addFix(item.title, item.impact || item.details, "cross", 1);
+    addFix(item.title, criticalGapFixCopy(item), "cross", 1, `critical-gap:${cleanDisplayText(item.title).toLowerCase()}`);
   });
 
   const groupedSuggestions = result.suggestions ?? {};
   ["high_impact", "medium_impact", "low_impact"].forEach((key) => {
     (groupedSuggestions[key] ?? []).forEach((item) => {
-      addFix(item.title, item.suggested_edit || item.details, key === "high_impact" ? "warning" : "check", key === "high_impact" ? 2 : 4);
+      addFix(item.title, item.suggested_edit || item.details, key === "high_impact" ? "warning" : "check", key === "high_impact" ? 2 : 4, `suggestion:${cleanDisplayText(item.title).toLowerCase()}`);
     });
   });
   (result.improvement_suggestions ?? []).forEach((item) => {
-    addFix(item.title, item.suggested_edit || item.details, "warning", 3);
+    addFix(item.title, item.suggested_edit || item.details, "warning", 3, `improvement:${cleanDisplayText(item.title).toLowerCase()}`);
   });
   (optimization?.remaining_gaps ?? []).forEach((item) => {
-    addFix(`Add proof for ${item}`, `Show ${item} in one specific work or project bullet.`, "warning", 2);
+    const keyword = cleanDisplayText(item);
+    addFix(`Add proof for ${keyword}`, `Add one specific bullet that shows how you used ${keyword} and what outcome it produced.`, "warning", 2, `remaining-gap:${keyword.toLowerCase()}`);
   });
 
-  return fixes.sort((left, right) => left.rank - right.rank).slice(0, 5);
+  return fixes
+    .sort((left, right) => left.rank - right.rank)
+    .slice(0, 5)
+    .map(({ key, ...item }) => item);
 }
 
 function buildSimpleCriticalIssues(result) {
@@ -3107,13 +3187,162 @@ function includesDisplayItem(items, value) {
   return items.some((item) => cleanDisplayText(item).toLowerCase() === key);
 }
 
+const GENERIC_NON_SKILL_TERMS = new Set([
+  "agent",
+  "agents",
+  "business",
+  "client",
+  "clients",
+  "collaboration",
+  "collaborative",
+  "communication",
+  "company",
+  "customer",
+  "customers",
+  "data-driven",
+  "deliver",
+  "delivery",
+  "design",
+  "development",
+  "enterprise",
+  "execution",
+  "impact",
+  "innovation",
+  "leadership",
+  "management",
+  "opportunity",
+  "organization",
+  "ownership",
+  "performance",
+  "process",
+  "processes",
+  "product",
+  "products",
+  "professional",
+  "project",
+  "projects",
+  "quality",
+  "reporting",
+  "requirement",
+  "requirements",
+  "responsibility",
+  "responsibilities",
+  "role",
+  "solution",
+  "solutions",
+  "strategy",
+  "support",
+  "system",
+  "systems",
+  "team",
+  "teams",
+  "work",
+  "workflow",
+  "workflows",
+]);
+
+const TECH_SKILL_TOKENS = new Set([
+  "ai",
+  "analytics",
+  "api",
+  "apis",
+  "aws",
+  "azure",
+  "backend",
+  "ci/cd",
+  "cloud",
+  "computer",
+  "css",
+  "data",
+  "database",
+  "databases",
+  "db",
+  "deep",
+  "devops",
+  "django",
+  "docker",
+  "engineering",
+  "etl",
+  "excel",
+  "fastapi",
+  "figma",
+  "frontend",
+  "gcp",
+  "generative",
+  "git",
+  "github",
+  "html",
+  "hugging",
+  "javascript",
+  "js",
+  "kubernetes",
+  "langchain",
+  "llm",
+  "llms",
+  "machine",
+  "matplotlib",
+  "microservice",
+  "microservices",
+  "ml",
+  "mongodb",
+  "mysql",
+  "nlp",
+  "node",
+  "node.js",
+  "numpy",
+  "pandas",
+  "pipeline",
+  "pipelines",
+  "postgresql",
+  "power",
+  "powerbi",
+  "prompt",
+  "prompts",
+  "python",
+  "pytorch",
+  "rag",
+  "react",
+  "redis",
+  "rest",
+  "saas",
+  "scikit-learn",
+  "seaborn",
+  "seo",
+  "sklearn",
+  "sql",
+  "tableau",
+  "tensorflow",
+  "testing",
+  "typescript",
+  "ux",
+  "ui",
+  "vector",
+  "visualization",
+]);
+
+function hasTechnicalSkillSignal(text) {
+  const normalized = cleanDisplayText(text).toLowerCase();
+  if (!normalized) return false;
+  if (TECH_SKILL_TOKENS.has(normalized)) return true;
+  if (/[+/#.]/.test(normalized) || /\d/.test(normalized)) return true;
+
+  const tokens = normalized
+    .split(/[\s(),-]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  return tokens.some((token) => TECH_SKILL_TOKENS.has(token));
+}
+
 function isSkillLikeTerm(value) {
   const text = cleanDisplayText(value);
   if (!text || text.length > 48 || /[.!?]$/.test(text)) return false;
+  const normalized = text.toLowerCase();
   const words = text.split(/\s+/);
   if (words.length > 5) return false;
+  if (GENERIC_NON_SKILL_TERMS.has(normalized)) return false;
   if (words.length > 2 && /\b(experience|responsibilities|qualifications|required|build|built|develop|design|create|partner|manage|own)\b/i.test(text)) return false;
-  return true;
+  return hasTechnicalSkillSignal(text);
 }
 
 function simpleIconText(icon) {
