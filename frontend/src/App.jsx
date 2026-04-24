@@ -59,6 +59,38 @@ const SECTION_SCORE_META = {
     caption: "Contact details, summary quality, quantified impact, and expected sections.",
   },
 };
+const SKILL_PLACEMENT_RULES = [
+  {
+    groupName: "AI & ML",
+    groupPattern: /(ai|ml|machine learning|llm|gen ai|generative|agent|rag)/i,
+    skillPattern: /(tensorflow|pytorch|keras|scikit-learn|sklearn|machine learning|nlp|langchain|langgraph|llamaindex|autogen|agentic ai|generative ai|prompt engineering|vector db|rag|pinecone|weaviate|chroma|faiss|qdrant)/i,
+    signalPattern: /(langchain|langgraph|llamaindex|autogen|agentic ai|generative ai|prompt engineering|vector db|rag|machine learning|scikit|tensorflow|pytorch)/i,
+  },
+  {
+    groupName: "Cloud & DevOps",
+    groupPattern: /(cloud|devops|platform|infrastructure|tools)/i,
+    skillPattern: /(aws|azure|gcp|docker|kubernetes|ci\/cd|cicd|jenkins|github actions|terraform|linux)/i,
+    signalPattern: /(aws|azure|gcp|docker|kubernetes|ci\/cd|cicd|jenkins|github actions|terraform|linux|git)/i,
+  },
+  {
+    groupName: "Backend Engineering",
+    groupPattern: /(backend|api|engineering|framework|server)/i,
+    skillPattern: /(fastapi|django|flask|rest api|rest apis|graphql|microservices|node\.js|node|redis|kafka)/i,
+    signalPattern: /(fastapi|django|flask|rest api|rest apis|graphql|microservices|node\.js|node|redis|kafka|python)/i,
+  },
+  {
+    groupName: "Data & Analytics",
+    groupPattern: /(data|analytics|visualization|bi|reporting)/i,
+    skillPattern: /(sql|postgresql|snowflake|bigquery|pandas|numpy|tableau|power bi|looker|excel|data visualization|a\/b testing|experimentation|etl|dbt)/i,
+    signalPattern: /(sql|postgresql|snowflake|bigquery|pandas|numpy|tableau|power bi|looker|excel|data visualization|a\/b testing|experimentation|etl|dbt)/i,
+  },
+  {
+    groupName: "Frontend",
+    groupPattern: /(frontend|ui|web)/i,
+    skillPattern: /(react|javascript|typescript|html|css|streamlit)/i,
+    signalPattern: /(react|javascript|typescript|html|css|streamlit)/i,
+  },
+];
 
 const RESUME_EXPORT_RULES = [
   { path: ["basics", "full_name"], label: "Full Name", minLength: 2 },
@@ -2194,6 +2226,7 @@ function ATSWorkspaceSection({
               <ATSSimpleResultPanel
                 result={atsResult}
                 optimization={atsOptimization}
+                currentResume={currentResume}
                 onAutoFix={onAutoFix}
                 autoFixDisabled={atsLoading || atsFixing}
                 autoFixing={atsFixing}
@@ -2744,7 +2777,7 @@ function BulletListEditor({ label, items, addLabel, onChange, onAdd, onRemove })
   );
 }
 
-function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled, autoFixing }) {
+function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, autoFixDisabled, autoFixing }) {
   const overallScore = normalizeScore(result.overall_ats_score ?? result.overall_score);
   const status = simpleAtsStatus(overallScore);
   const metrics = [
@@ -2763,6 +2796,7 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
   const roleFits = buildSimpleRoleFit(result, skills);
   const summary = buildSimpleAtsSummary(result, status, fixes.length, optimization);
   const actionPlanLabel = allFixes.length > fixes.length ? `Showing ${fixes.length} of ${allFixes.length}` : `${fixes.length} item${fixes.length === 1 ? "" : "s"}`;
+  const correctionPlan = buildAtsCorrectionPlan(result, currentResume, overallScore);
 
   return (
     <div className="ats-simple-result">
@@ -2814,6 +2848,36 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
         </section>
       ) : null}
 
+      {correctionPlan.items.length ? (
+        <section className="ats-simple-card ats-correction-card">
+          <div className="ats-simple-section-head">
+            <div>
+              <p className="ats-simple-label">Correction Suggestions</p>
+              <h4>Old Line, New Line, Score Lift</h4>
+            </div>
+            <span className="ats-simple-pill success">
+              {overallScore} -&gt; {correctionPlan.projectedScore}
+            </span>
+          </div>
+
+          <div className="ats-correction-summary">
+            <div>
+              <span>Estimated lift</span>
+              <strong>+{correctionPlan.totalImpact} points</strong>
+            </div>
+            <p>
+              These edits are suggestions only inside ATS Test. Your editor resume is unchanged until you manually add the lines you trust.
+            </p>
+          </div>
+
+          <div className="ats-correction-list">
+            {correctionPlan.items.map((item) => (
+              <CorrectionSuggestionCard item={item} key={item.id} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {skillGroups.length ? (
         <section className="ats-simple-card">
           <div className="ats-simple-section-head">
@@ -2850,7 +2914,47 @@ function ATSSimpleResultPanel({ result, optimization, onAutoFix, autoFixDisabled
           </div>
         </section>
       ) : null}
+
+      {correctionPlan.items.length ? (
+        <section className="ats-simple-card ats-preview-card">
+          <div className="ats-simple-section-head">
+            <div>
+              <p className="ats-simple-label">ATS Preview</p>
+              <h4>Resume Preview With Proposed Green Changes</h4>
+            </div>
+            <span className="ats-simple-pill neutral">Editor untouched</span>
+          </div>
+          <AtsSuggestedResumePreview resume={currentResume} correctionPlan={correctionPlan} />
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function CorrectionSuggestionCard({ item }) {
+  return (
+    <article className="ats-correction-item">
+      <div className="ats-correction-topline">
+        <span className="ats-simple-status strong">+{item.impact} score</span>
+        <strong>{item.skill}</strong>
+        <span>{item.action}</span>
+      </div>
+      <div className="ats-correction-lines">
+        <div>
+          <span>Old resume line</span>
+          <p>{item.oldLine}</p>
+        </div>
+        <div className="is-new">
+          <span>New model suggestion</span>
+          <p>{item.newLine}</p>
+        </div>
+      </div>
+      <div className="ats-skill-placement">
+        <span>Where to place it</span>
+        <strong>{item.skillPlacement}</strong>
+        <p>{item.guidance}</p>
+      </div>
+    </article>
   );
 }
 
@@ -2872,6 +2976,347 @@ function SimpleFixItem({ item }) {
       </div>
     </div>
   );
+}
+
+function AtsSuggestedResumePreview({ resume, correctionPlan }) {
+  const basics = resume?.basics ?? {};
+  const firstExperience = (resume?.experience ?? [])[0];
+  const firstProject = (resume?.projects ?? [])[0];
+  const skillGroups = correctionPlan.skillGroups?.length
+    ? correctionPlan.skillGroups
+    : [{ groupName: correctionPlan.skillGroupName, skillLine: correctionPlan.skillLine }];
+
+  return (
+    <div className="ats-suggested-preview">
+      <div className="ats-preview-resume-head">
+        <h5>{basics.full_name || "Resume preview"}</h5>
+        <p>{basics.headline || correctionPlan.targetRole || "Targeted resume"}</p>
+      </div>
+
+      {basics.summary ? (
+        <div className="ats-preview-section-mini">
+          <strong>Summary</strong>
+          <p>{stripRichText(basics.summary)}</p>
+        </div>
+      ) : null}
+
+      <div className="ats-preview-section-mini">
+        <strong>Skills</strong>
+        {skillGroups.map((group) => (
+          <p key={`preview-skill-${group.groupName}`}>
+            <span>{group.groupName}: </span>
+            <mark>{group.skillLine}</mark>
+          </p>
+        ))}
+      </div>
+
+      {firstExperience ? (
+        <div className="ats-preview-section-mini">
+          <strong>Experience</strong>
+          <p>{[firstExperience.role, firstExperience.company].filter(Boolean).join(" - ")}</p>
+          <ul>
+            {(firstExperience.achievements ?? []).filter(Boolean).slice(0, 2).map((line, index) => (
+              <li key={`existing-exp-${index}`}>{stripRichText(line)}</li>
+            ))}
+            {correctionPlan.previewBullets.slice(0, 3).map((line, index) => (
+              <li className="is-proposed" key={`proposed-exp-${index}`}>
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : firstProject ? (
+        <div className="ats-preview-section-mini">
+          <strong>Projects</strong>
+          <p>{firstProject.name}</p>
+          <ul>
+            {correctionPlan.previewBullets.slice(0, 3).map((line, index) => (
+              <li className="is-proposed" key={`proposed-project-${index}`}>
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function buildAtsCorrectionPlan(result, resume, overallScore) {
+  const skills = uniqueDisplayItems([
+    ...(result.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result.missing_keywords ?? []).filter((item) => ["high", "medium"].includes(String(item.importance || "").toLowerCase())).map((item) => item.keyword),
+    ...(result.weak_evidence_skills ?? []).map((item) => item.keyword),
+  ]).filter(isSkillLikeTerm);
+
+  const resumeLines = collectResumeEvidenceLines(resume);
+  const items = skills.slice(0, 5).map((skill, index) => {
+    const oldLine = findBestOldLineForSkill(skill, resumeLines, index);
+    const section = oldLine.section === "projects" ? "Projects" : "Experience";
+    const action = oldLine.synthetic ? `Add to ${section}` : `Rewrite in ${section}`;
+    const placement = findSkillPlacement(resume, skill);
+    const newLine = buildModelResumeLine(skill, result, oldLine.text, section);
+    const impact = estimateSkillImpact(skill, result, index);
+
+    return {
+      id: `${skill.toLowerCase()}-${index}`,
+      skill,
+      oldLine: oldLine.text,
+      newLine,
+      action,
+      impact,
+      skillPlacement: buildSkillPlacementText(skill, placement),
+      guidance: buildSkillGuidance(skill, result.job_title, section, placement),
+      placement,
+    };
+  });
+  const totalImpact = Math.min(28, items.reduce((sum, item) => sum + item.impact, 0));
+  const projectedScore = Math.min(100, normalizeScore(overallScore) + totalImpact);
+  const skillGroups = buildPreviewSkillGroups(items);
+  const primarySkillGroup = skillGroups[0] ?? { groupName: "Technical Skills", skillLine: items.map((item) => item.skill).join(", ") };
+
+  return {
+    items,
+    totalImpact,
+    projectedScore,
+    skillGroupName: primarySkillGroup.groupName,
+    skillLine: primarySkillGroup.skillLine,
+    skillGroups,
+    targetRole: result.job_title || "",
+    previewBullets: items.map((item) => item.newLine),
+  };
+}
+
+function collectResumeEvidenceLines(resume) {
+  const lines = [];
+  (resume?.experience ?? []).forEach((item, itemIndex) => {
+    (item.achievements ?? []).forEach((achievement, lineIndex) => {
+      const text = cleanDisplayText(stripRichText(achievement));
+      if (text) lines.push({ text, section: "experience", itemIndex, lineIndex });
+    });
+  });
+  (resume?.projects ?? []).forEach((item, itemIndex) => {
+    (item.highlights ?? []).forEach((highlight, lineIndex) => {
+      const text = cleanDisplayText(stripRichText(highlight));
+      if (text) lines.push({ text, section: "projects", itemIndex, lineIndex });
+    });
+  });
+  return lines;
+}
+
+function findBestOldLineForSkill(skill, lines, offset = 0) {
+  if (!lines.length) {
+    return {
+      text: "No matching resume bullet found yet. Add a new evidence bullet instead of only adding a keyword.",
+      section: "experience",
+      synthetic: true,
+    };
+  }
+
+  const tokens = cleanDisplayText(skill).toLowerCase().split(/[\s/.-]+/).filter((token) => token.length > 2);
+  const scored = lines.map((line) => {
+    const lowered = line.text.toLowerCase();
+    const score = tokens.reduce((sum, token) => sum + (lowered.includes(token) ? 1 : 0), 0);
+    return { ...line, score };
+  });
+  scored.sort((left, right) => right.score - left.score || left.text.length - right.text.length);
+  return scored[0].score > 0 ? scored[0] : scored[offset % scored.length];
+}
+
+function findSkillPlacement(resume, skill) {
+  const groups = resume?.skills ?? [];
+  const rule = inferSkillPlacementRule(skill);
+  const exactItemGroup = groups.find((group) => (group.items ?? []).some((item) => cleanDisplayText(item).toLowerCase() === cleanDisplayText(skill).toLowerCase()));
+  const namedGroup = groups.find((group) => rule.groupPattern.test(group.name || ""));
+  const signalGroup = groups.find((group) => (group.items ?? []).some((item) => rule.signalPattern.test(cleanDisplayText(item))));
+  const fallbackGroup = groups.find((group) => /technical|skill|core|tools|technology/i.test(group.name || "")) || groups[0];
+  const preferredGroup = exactItemGroup || namedGroup || signalGroup;
+
+  if (preferredGroup) {
+    return {
+      groupName: preferredGroup.name || rule.groupName,
+      existingItems: preferredGroup.items ?? [],
+      shouldCreate: false,
+      recommendedGroupName: rule.groupName,
+    };
+  }
+
+  if (!fallbackGroup) {
+    return {
+      groupName: rule.groupName,
+      existingItems: [],
+      shouldCreate: true,
+      recommendedGroupName: rule.groupName,
+    };
+  }
+
+  return {
+    groupName: rule.groupName,
+    existingItems: [],
+    shouldCreate: true,
+    recommendedGroupName: rule.groupName,
+    fallbackGroupName: fallbackGroup.name,
+  };
+}
+
+function inferSkillPlacementRule(skill) {
+  const normalized = cleanDisplayText(skill);
+  return SKILL_PLACEMENT_RULES.find((rule) => rule.skillPattern.test(normalized)) || {
+    groupName: "Technical Skills",
+    groupPattern: /(technical|skill|core|tools|technology)/i,
+    skillPattern: /.+/i,
+    signalPattern: /.+/i,
+  };
+}
+
+function buildSkillPlacementText(skill, placement) {
+  const quotedSkill = `"${skill}"`;
+  if (placement.shouldCreate) {
+    return `Create ${placement.groupName} skill group, then add ${quotedSkill}.`;
+  }
+  return `Add ${quotedSkill} under ${placement.groupName}.`;
+}
+
+function buildSkillGuidance(skill, jobTitle, section, placement) {
+  const role = cleanDisplayText(jobTitle || "this role");
+  const groupAction = placement.shouldCreate ? `Because your current skills do not have a clean ${placement.groupName} bucket, create that group instead of forcing this into an unrelated section.` : `This keeps ${skill} beside related skills recruiters expect to scan together.`;
+  const sectionLabel = section.toLowerCase();
+  return `If you have real hands-on ${skill} experience, add the skill and support it with the ${sectionLabel} bullet above. That combination is stronger than a keyword-only add for ${role}. ${groupAction}`;
+}
+
+function buildPreviewSkillGroups(items) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const groupName = item.placement?.groupName || "Technical Skills";
+    const existingItems = item.placement?.existingItems ?? [];
+    const current = groups.get(groupName) ?? [];
+    groups.set(groupName, uniqueDisplayItems([...current, ...existingItems, item.skill]));
+  });
+  return Array.from(groups.entries()).map(([groupName, skills]) => ({
+    groupName,
+    skillLine: skills.join(", "),
+  }));
+}
+
+function buildModelResumeLine(skill, result, oldLine, section) {
+  const role = sanitizeRoleLabel(result?.job_title);
+  const lowered = cleanDisplayText(skill).toLowerCase();
+  const context = detectResumeBulletContext(skill, result);
+
+  if (lowered === "tensorflow") {
+    return "Developed TensorFlow model training pipelines with Python and Pandas, improving experiment tracking and reducing manual feature-preparation effort.";
+  }
+  if (lowered === "pytorch") {
+    return "Implemented PyTorch classification models with custom data loaders and evaluation scripts, improving model iteration speed and validation accuracy.";
+  }
+  if (["scikit-learn", "sklearn"].includes(lowered)) {
+    return "Built Scikit-learn feature engineering and model evaluation pipelines with Pandas, improving baseline accuracy and speeding up ML experimentation.";
+  }
+  if (lowered === "machine learning") {
+    return "Developed machine-learning pipelines with Python, Pandas, and Scikit-learn, improving feature processing and model evaluation for predictive analysis.";
+  }
+  if (["natural language processing", "nlp"].includes(lowered)) {
+    return "Implemented NLP preprocessing and text-classification pipelines with Python and Scikit-learn, improving document categorization accuracy.";
+  }
+  if (lowered === "etl") {
+    return "Built SQL and Pandas ETL pipelines to clean, transform, and validate reporting data, reducing manual preparation effort and improving data reliability.";
+  }
+  if (["dbt", "airflow"].includes(lowered)) {
+    return `Designed ${skill} data pipelines for scheduled transformations and validation checks, improving ETL reliability and analytics refresh consistency.`;
+  }
+  if (["aws", "azure", "gcp"].includes(lowered)) {
+    return `Deployed Dockerized FastAPI APIs on ${skill} with PostgreSQL configuration, improving scalability and simplifying release environment setup.`;
+  }
+  if (["docker", "kubernetes", "ci/cd", "jenkins", "github actions"].includes(lowered)) {
+    const tech = lowered === "ci/cd" ? "GitHub Actions" : skill;
+    return `Implemented ${tech} pipelines for FastAPI services, automating test runs, Docker builds, and deployment checks to reduce manual release effort.`;
+  }
+  if (lowered === "microservices") {
+    return "Designed FastAPI microservices with PostgreSQL-backed service boundaries, reducing API coupling and improving scalability for reporting workflows.";
+  }
+  if (["rest apis", "api", "apis", "fastapi", "django", "node.js", "node"].includes(lowered)) {
+    const tech = ["api", "apis", "rest apis"].includes(lowered) ? "FastAPI" : skill;
+    return `Built ${tech} API endpoints with PostgreSQL data access, improving request handling and making backend services easier to extend.`;
+  }
+  if (["langchain", "langgraph", "llamaindex", "autogen", "agentic ai"].includes(lowered)) {
+    const tech = lowered === "agentic ai" ? "LangChain" : skill;
+    return `Built a ${tech} agent workflow with FastAPI tool-calling and vector retrieval, automating multi-step recommendation tasks and improving response relevance.`;
+  }
+  if (["vector db", "vectordb", "pinecone", "chromadb", "faiss", "rag"].includes(lowered)) {
+    const tech = lowered === "vector db" || lowered === "vectordb" || lowered === "rag" ? "FAISS" : skill;
+    return `Implemented a ${tech}-backed retrieval pipeline with Python and FastAPI, improving semantic search accuracy for document-based recommendations.`;
+  }
+  if (["power bi", "tableau", "looker", "data visualization", "excel"].includes(lowered)) {
+    const tech = lowered === "data visualization" ? "Power BI" : skill;
+    return `Developed ${tech} dashboards on SQL datasets, improving KPI visibility and reducing manual reporting for business stakeholders.`;
+  }
+  if (["sql", "postgresql", "bigquery", "snowflake", "pandas", "numpy"].includes(lowered)) {
+    return buildDataSkillBullet(skill, lowered);
+  }
+  if (context === "ai") {
+    return `Designed Python model workflows with ${skill}, improving feature processing, evaluation speed, and inference consistency for AI use cases.`;
+  }
+  if (context === "data") {
+    return `Built SQL and Pandas analysis pipelines with ${skill}, improving data accuracy and reducing manual reporting effort.`;
+  }
+  if (context === "cloud") {
+    return `Implemented AWS deployment workflows with ${skill}, improving service scalability and reducing manual environment configuration.`;
+  }
+  if (oldLine && oldLine.length > 30) {
+    const baseLine = oldLine.replace(/[.!?]*$/, "");
+    return `Improved ${baseLine.charAt(0).toLowerCase()}${baseLine.slice(1)} using ${skill}, FastAPI, and PostgreSQL to increase automation and service scalability.`;
+  }
+  return `Developed a ${role} workflow using ${skill}, FastAPI, and PostgreSQL, improving automation, scalability, and request handling.`;
+}
+
+function buildDataSkillBullet(skill, lowered) {
+  if (lowered === "sql") {
+    return "Optimized SQL queries for reporting datasets, improving extraction speed and reducing manual reconciliation during analytics refreshes.";
+  }
+  if (lowered === "postgresql") {
+    return "Designed PostgreSQL schemas and indexed queries for analytics APIs, improving data retrieval speed and reporting consistency.";
+  }
+  if (lowered === "pandas") {
+    return "Developed Pandas transformation pipelines for CSV and SQL datasets, reducing manual cleanup and improving analysis accuracy.";
+  }
+  if (lowered === "numpy") {
+    return "Implemented NumPy-based feature calculations for model datasets, improving preprocessing speed and numerical consistency.";
+  }
+  if (lowered === "bigquery") {
+    return "Built BigQuery analysis workflows for large reporting tables, improving query scalability and dashboard refresh efficiency.";
+  }
+  if (lowered === "snowflake") {
+    return "Developed Snowflake data marts for analytics reporting, improving governed access and reducing repeated manual data pulls.";
+  }
+  return `Optimized ${skill} data workflows for ETL and analysis, reducing manual cleanup and improving reliability of reporting outputs.`;
+}
+
+function sanitizeRoleLabel(jobTitle) {
+  const role = cleanDisplayText(jobTitle || "target role");
+  if (!role || /score|match|requirement|description/i.test(role)) return "backend";
+  return role;
+}
+
+function detectResumeBulletContext(skill, result) {
+  const combined = cleanDisplayText([
+    skill,
+    result?.job_title,
+    ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result?.missing_keywords ?? []).map((item) => item.keyword),
+  ].join(" ")).toLowerCase();
+
+  if (/(tensorflow|pytorch|keras|scikit|sklearn|langchain|langgraph|llamaindex|autogen|agentic|generative|vector|rag|model|nlp|machine learning|ai)/i.test(combined)) return "ai";
+  if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|deployment|cloud)/i.test(combined)) return "cloud";
+  if (/(sql|pandas|numpy|dashboard|etl|analytics|tableau|power bi|data)/i.test(combined)) return "data";
+  return "backend";
+}
+
+function estimateSkillImpact(skill, result, index) {
+  const required = (result.missing_required_skills ?? []).some((item) => cleanDisplayText(item.keyword).toLowerCase() === cleanDisplayText(skill).toLowerCase());
+  const weak = (result.weak_evidence_skills ?? []).some((item) => cleanDisplayText(item.keyword).toLowerCase() === cleanDisplayText(skill).toLowerCase());
+  if (required) return Math.max(4, 8 - index);
+  if (weak) return 3;
+  return Math.max(2, 5 - Math.floor(index / 2));
 }
 
 function SimpleListItem({ icon, title, text }) {
