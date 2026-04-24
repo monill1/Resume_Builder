@@ -3377,6 +3377,23 @@ a {
     justify-content: center;
     min-height: 42px;
     font-size: 0.9rem;
+    background: var(--surface-muted);
+    border-color: var(--border);
+    color: var(--text);
+    box-shadow: none;
+  }
+
+  .app-navbar-actions .ui-btn-nav:hover:not(:disabled) {
+    background: #eef4ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+  }
+
+  .app-navbar-actions .ui-btn-nav.nav-pill-active {
+    background: #1e3a8a;
+    border-color: #1e3a8a;
+    color: #ffffff;
+    box-shadow: none;
   }
 
   .save-menu {
@@ -3427,11 +3444,17 @@ a {
     min-height: 42px;
     padding: 8px 10px;
     border-radius: 12px;
+    border-color: var(--border);
+    background: var(--surface-muted);
+    color: var(--text);
+    box-shadow: none;
   }
 
   .profile-picker-label {
     align-self: center;
     font-size: 0.68rem;
+    color: var(--muted);
+    opacity: 1;
   }
 
   .profile-picker-trigger {
@@ -3439,6 +3462,7 @@ a {
     width: 100%;
     justify-content: space-between;
     font-size: 0.9rem;
+    color: var(--text);
   }
 
   .profile-picker-value {
@@ -3492,6 +3516,10 @@ a {
     min-height: 42px;
     border-radius: 12px;
     font-size: 0.9rem;
+    border-color: var(--border);
+    background: var(--surface-muted);
+    color: var(--text);
+    box-shadow: none;
   }
 
   .template-picker {
@@ -3503,11 +3531,17 @@ a {
     min-height: 42px;
     padding: 8px 10px;
     border-radius: 12px;
+    border-color: var(--border);
+    background: var(--surface-muted);
+    color: var(--text);
+    box-shadow: none;
   }
 
   .template-picker-label {
     align-self: center;
     font-size: 0.68rem;
+    color: var(--muted);
+    opacity: 1;
   }
 
   .template-picker-trigger {
@@ -3515,6 +3549,7 @@ a {
     width: 100%;
     justify-content: space-between;
     font-size: 0.9rem;
+    color: var(--text);
   }
 
   .template-picker-value {
