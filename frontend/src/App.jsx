@@ -90,6 +90,48 @@ const SKILL_PLACEMENT_RULES = [
     skillPattern: /(react|javascript|typescript|html|css|streamlit)/i,
     signalPattern: /(react|javascript|typescript|html|css|streamlit)/i,
   },
+  {
+    groupName: "Product & Delivery",
+    groupPattern: /(product|project|delivery|agile|scrum|program)/i,
+    skillPattern: /(product management|roadmap|user stories|requirements|stakeholder management|agile|scrum|jira|confluence|prioritization|release planning)/i,
+    signalPattern: /(roadmap|user stories|requirements|stakeholder|agile|scrum|jira|confluence|prioritization|release)/i,
+  },
+  {
+    groupName: "Business & Operations",
+    groupPattern: /(business|operations|process|strategy|analysis)/i,
+    skillPattern: /(business analysis|process improvement|operations|kpi|stakeholder management|documentation|sop|gap analysis|requirement gathering)/i,
+    signalPattern: /(business analysis|process|operations|kpi|stakeholder|documentation|sop|gap analysis|requirement)/i,
+  },
+  {
+    groupName: "Marketing & Growth",
+    groupPattern: /(marketing|growth|campaign|seo|content|social)/i,
+    skillPattern: /(seo|sem|google analytics|campaign management|content strategy|social media|email marketing|performance marketing|conversion optimization|crm)/i,
+    signalPattern: /(seo|sem|analytics|campaign|content|social|email marketing|performance marketing|conversion|crm)/i,
+  },
+  {
+    groupName: "Sales & Customer",
+    groupPattern: /(sales|customer|client|account|support|success)/i,
+    skillPattern: /(salesforce|crm|lead generation|account management|customer success|client relationship|negotiation|pipeline management|customer support)/i,
+    signalPattern: /(salesforce|crm|lead|account|customer success|client|negotiation|pipeline|support)/i,
+  },
+  {
+    groupName: "Finance & Compliance",
+    groupPattern: /(finance|accounting|audit|tax|compliance|risk)/i,
+    skillPattern: /(financial analysis|accounting|reconciliation|budgeting|forecasting|audit|taxation|compliance|risk analysis|tally|quickbooks)/i,
+    signalPattern: /(financial|accounting|reconciliation|budget|forecast|audit|tax|compliance|risk|tally|quickbooks)/i,
+  },
+  {
+    groupName: "People & Hiring",
+    groupPattern: /(hr|human resources|people|talent|recruit)/i,
+    skillPattern: /(recruitment|talent acquisition|hr operations|onboarding|employee engagement|payroll|performance management|sourcing|interviewing)/i,
+    signalPattern: /(recruit|talent|hr|onboarding|employee|payroll|performance|sourcing|interview)/i,
+  },
+  {
+    groupName: "Design & Research",
+    groupPattern: /(design|ux|ui|research|creative)/i,
+    skillPattern: /(figma|wireframing|prototyping|user research|usability testing|design systems|adobe|photoshop|illustrator)/i,
+    signalPattern: /(figma|wireframe|prototype|user research|usability|design system|adobe|photoshop|illustrator)/i,
+  },
 ];
 
 const RESUME_EXPORT_RULES = [
@@ -2853,7 +2895,7 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
           <div className="ats-simple-section-head">
             <div>
               <p className="ats-simple-label">Correction Suggestions</p>
-              <h4>Old Line, New Line, Score Lift</h4>
+              <h4>Professional Coach Rewrite and Score Lift</h4>
             </div>
             <span className="ats-simple-pill success">
               {overallScore} -&gt; {correctionPlan.projectedScore}
@@ -2866,7 +2908,7 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
               <strong>+{correctionPlan.totalImpact} points</strong>
             </div>
             <p>
-              These edits are suggestions only inside ATS Test. Your editor resume is unchanged until you manually add the lines you trust.
+              These edits are personalized suggestions based on this resume and JD. Your editor resume is unchanged until you manually add the lines you trust.
             </p>
           </div>
 
@@ -2875,6 +2917,23 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
               <CorrectionSuggestionCard item={item} key={item.id} />
             ))}
           </div>
+
+          {correctionPlan.projectIdeas.length ? (
+            <div className="ats-project-coach-block">
+              <div className="ats-simple-section-head">
+                <div>
+                  <p className="ats-simple-label">Project Coach</p>
+                  <h4>Projects to Build and Add Before Applying</h4>
+                </div>
+                <span className="ats-simple-pill success">Up to +{correctionPlan.projectImpact} more</span>
+              </div>
+              <div className="ats-project-idea-grid">
+                {correctionPlan.projectIdeas.map((project) => (
+                  <ProjectIdeaCard project={project} key={project.id} />
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -2945,7 +3004,7 @@ function CorrectionSuggestionCard({ item }) {
           <p>{item.oldLine}</p>
         </div>
         <div className="is-new">
-          <span>New model suggestion</span>
+          <span>Professional coach suggestion</span>
           <p>{item.newLine}</p>
         </div>
       </div>
@@ -2954,6 +3013,40 @@ function CorrectionSuggestionCard({ item }) {
         <strong>{item.skillPlacement}</strong>
         <p>{item.guidance}</p>
       </div>
+    </article>
+  );
+}
+
+function ProjectIdeaCard({ project }) {
+  return (
+    <article className="ats-project-idea-card">
+      <div className="ats-correction-topline">
+        <span className="ats-simple-status strong">+{project.impact} score</span>
+        <strong>{project.title}</strong>
+        <span>Add in Projects</span>
+      </div>
+      <p>{project.why}</p>
+      <div className="ats-project-idea-columns">
+        <div>
+          <span>Project section entry</span>
+          <strong>{project.projectName}</strong>
+          <p>{project.stack}</p>
+        </div>
+        <div>
+          <span>Resume bullets</span>
+          <ul>
+            {project.bullets.map((bullet) => (
+              <li key={bullet}>{bullet}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      {project.learnBeforeSubmit.length ? (
+        <div className="ats-learning-plan">
+          <span>Learn before submitting</span>
+          <p>{project.learnBeforeSubmit.join(", ")}</p>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -3038,6 +3131,27 @@ function AtsSuggestedResumePreview({ resume, correctionPlan }) {
           </ul>
         </div>
       ) : null}
+
+      {correctionPlan.projectIdeas.length ? (
+        <div className="ats-preview-section-mini">
+          <strong>Projects</strong>
+          {correctionPlan.projectIdeas.slice(0, 2).map((project) => (
+            <div className="ats-preview-project" key={`preview-project-${project.id}`}>
+              <p>
+                <mark>{project.projectName}</mark>
+              </p>
+              <p>{project.stack}</p>
+              <ul>
+                {project.bullets.slice(0, 2).map((bullet) => (
+                  <li className="is-proposed" key={`preview-project-bullet-${project.id}-${bullet}`}>
+                    {bullet}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3052,10 +3166,12 @@ function buildAtsCorrectionPlan(result, resume, overallScore) {
   const resumeLines = collectResumeEvidenceLines(resume);
   const items = skills.slice(0, 5).map((skill, index) => {
     const oldLine = findBestOldLineForSkill(skill, resumeLines, index);
-    const section = oldLine.section === "projects" ? "Projects" : "Experience";
-    const action = oldLine.synthetic ? `Add to ${section}` : `Rewrite in ${section}`;
+    const context = detectResumeBulletContext(skill, result, resume);
+    const shouldPreferProject = shouldSuggestProjectEvidence(skill, context, result, resume);
+    const section = shouldPreferProject || oldLine.section === "projects" ? "Projects" : "Experience";
+    const action = oldLine.synthetic || shouldPreferProject ? `Add to ${section}` : `Rewrite in ${section}`;
     const placement = findSkillPlacement(resume, skill);
-    const newLine = buildModelResumeLine(skill, result, oldLine.text, section);
+    const newLine = buildModelResumeLine(skill, result, oldLine.text, section, resume);
     const impact = estimateSkillImpact(skill, result, index);
 
     return {
@@ -3070,7 +3186,9 @@ function buildAtsCorrectionPlan(result, resume, overallScore) {
       placement,
     };
   });
-  const totalImpact = Math.min(28, items.reduce((sum, item) => sum + item.impact, 0));
+  const projectIdeas = buildSuggestedProjectIdeas(result, resume, skills).slice(0, 3);
+  const projectImpact = Math.min(14, projectIdeas.reduce((sum, item) => sum + item.impact, 0));
+  const totalImpact = Math.min(38, items.reduce((sum, item) => sum + item.impact, 0) + projectImpact);
   const projectedScore = Math.min(100, normalizeScore(overallScore) + totalImpact);
   const skillGroups = buildPreviewSkillGroups(items);
   const primarySkillGroup = skillGroups[0] ?? { groupName: "Technical Skills", skillLine: items.map((item) => item.skill).join(", ") };
@@ -3082,6 +3200,8 @@ function buildAtsCorrectionPlan(result, resume, overallScore) {
     skillGroupName: primarySkillGroup.groupName,
     skillLine: primarySkillGroup.skillLine,
     skillGroups,
+    projectIdeas,
+    projectImpact,
     targetRole: result.job_title || "",
     previewBullets: items.map((item) => item.newLine),
   };
@@ -3102,6 +3222,210 @@ function collectResumeEvidenceLines(resume) {
     });
   });
   return lines;
+}
+
+function shouldSuggestProjectEvidence(skill, context, result, resume) {
+  const hasProjects = (resume?.projects ?? []).some((project) =>
+    cleanDisplayText([project.name, project.tech_stack, ...(project.highlights ?? [])].join(" "))
+  );
+  const required = (result.missing_required_skills ?? []).some((item) => sameDisplayText(item.keyword, skill));
+  const missing = (result.missing_keywords ?? []).some((item) => sameDisplayText(item.keyword, skill));
+  const projectFriendly = ["ai", "data", "frontend", "backend", "cloud", "product", "marketing", "sales", "finance", "hr", "design", "security", "mobile"].includes(context);
+  return projectFriendly && (required || missing || !hasProjects);
+}
+
+function buildSuggestedProjectIdeas(result, resume, skills) {
+  const role = sanitizeRoleLabel(result?.job_title);
+  const context = detectResumeBulletContext(skills.join(" "), result, resume);
+  const missing = uniqueDisplayItems(skills).slice(0, 6);
+  const primarySkill = missing[0] || "role-specific skills";
+  const secondarySkill = missing[1] || role;
+  const project = projectTemplateForContext(context, role, primarySkill, secondarySkill, missing);
+  const secondaryProject = secondaryProjectTemplateForContext(context, role, missing);
+  return [project, secondaryProject]
+    .filter(Boolean)
+    .filter((item, index, list) => list.findIndex((candidate) => candidate.projectName === item.projectName) === index);
+}
+
+function projectTemplateForContext(context, role, primarySkill, secondarySkill, missingSkills) {
+  const skillsText = missingSkills.slice(0, 4).join(", ");
+  if (context === "ai") {
+    return {
+      id: "project-ai-evidence",
+      title: `Build proof for ${primarySkill}`,
+      projectName: "Job Description Match Predictor",
+      stack: `Python, Pandas, Scikit-learn, ${skillsText || "model evaluation"}, Streamlit`,
+      why: `For ${role}, this gives recruiters real project evidence instead of only a keyword. It can support missing ML, evaluation, and stakeholder-facing explanation signals.`,
+      bullets: [
+        `Built a resume-to-JD scoring tool using ${primarySkill}, feature extraction, and model evaluation to rank candidate fit against job requirements.`,
+        "Created a Streamlit dashboard explaining missing skills, matched evidence, and recommended resume changes for non-technical stakeholders.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 7,
+    };
+  }
+  if (context === "data") {
+    return {
+      id: "project-data-evidence",
+      title: `Build data proof for ${primarySkill}`,
+      projectName: "Business KPI Analytics Dashboard",
+      stack: `SQL, Python, Pandas, ${skillsText || "Power BI/Tableau"}`,
+      why: `A project section can show end-to-end analytics work: data cleaning, metrics, visualization, and business recommendations.`,
+      bullets: [
+        `Built an analytics dashboard using ${primarySkill} to track KPIs, clean raw datasets, and surface trends for business decision-making.`,
+        "Documented stakeholder questions, metric definitions, and recommended actions to connect analysis with business outcomes.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 7,
+    };
+  }
+  if (context === "product") {
+    return {
+      id: "project-product-evidence",
+      title: `Build stakeholder proof for ${primarySkill}`,
+      projectName: "Feature Prioritization and Launch Plan",
+      stack: `Jira/Notion, roadmap, user stories, ${skillsText || "stakeholder management"}`,
+      why: `This proves product/delivery thinking: stakeholders, prioritization, requirements, success metrics, and launch tradeoffs.`,
+      bullets: [
+        `Created a feature prioritization plan using ${primarySkill}, user pain points, effort scoring, and business impact to define a release roadmap.`,
+        "Wrote user stories, acceptance criteria, stakeholder notes, and launch metrics to show end-to-end delivery readiness.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 7,
+    };
+  }
+  if (context === "marketing") {
+    return {
+      id: "project-marketing-evidence",
+      title: `Build campaign proof for ${primarySkill}`,
+      projectName: "Performance Marketing Campaign Analysis",
+      stack: `Google Analytics, SEO, content calendar, ${skillsText || "campaign reporting"}`,
+      why: `This gives campaign evidence with audience, channel, metric, and optimization decisions.`,
+      bullets: [
+        `Planned a campaign using ${primarySkill}, audience segmentation, channel goals, and weekly conversion metrics.`,
+        "Built a reporting sheet with traffic, leads, conversion rate, and recommendations for improving campaign ROI.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 6,
+    };
+  }
+  if (context === "sales") {
+    return {
+      id: "project-sales-evidence",
+      title: `Build pipeline proof for ${primarySkill}`,
+      projectName: "CRM Pipeline Improvement Plan",
+      stack: `CRM, lead scoring, account notes, ${skillsText || "pipeline management"}`,
+      why: `This shows sales execution through pipeline hygiene, follow-up strategy, and measurable opportunity tracking.`,
+      bullets: [
+        `Designed a CRM pipeline workflow using ${primarySkill}, lead stages, follow-up SLAs, and account qualification notes.`,
+        "Created a weekly dashboard for lead source, conversion stage, blocked deals, and next-best actions.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 6,
+    };
+  }
+  if (context === "finance") {
+    return {
+      id: "project-finance-evidence",
+      title: `Build finance proof for ${primarySkill}`,
+      projectName: "Monthly Financial Reporting Pack",
+      stack: `Excel, reconciliation, variance analysis, ${skillsText || "budgeting/forecasting"}`,
+      why: `This shows accuracy, controls, and reporting judgment instead of only naming finance keywords.`,
+      bullets: [
+        `Created a monthly reporting pack using ${primarySkill}, variance checks, and reconciliation logic to improve financial review accuracy.`,
+        "Documented assumptions, exceptions, and audit-ready notes for faster manager review.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 6,
+    };
+  }
+  if (context === "hr") {
+    return {
+      id: "project-hr-evidence",
+      title: `Build HR proof for ${primarySkill}`,
+      projectName: "Recruitment Funnel and Onboarding Tracker",
+      stack: `ATS tracker, sourcing sheet, onboarding checklist, ${skillsText || "HR operations"}`,
+      why: `This gives people-operations evidence through process, tracking, and coordination outcomes.`,
+      bullets: [
+        `Built a hiring funnel tracker using ${primarySkill}, candidate stages, interview feedback, and turnaround-time metrics.`,
+        "Created onboarding checklists and status reporting to improve joining readiness and coordination quality.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 6,
+    };
+  }
+  if (context === "design") {
+    return {
+      id: "project-design-evidence",
+      title: `Build design proof for ${primarySkill}`,
+      projectName: "Usability Redesign Case Study",
+      stack: `Figma, wireframes, prototype, ${skillsText || "user research"}`,
+      why: `A design case study proves research, decisions, visual systems, and iteration quality.`,
+      bullets: [
+        `Designed a user flow redesign using ${primarySkill}, wireframes, and usability notes to reduce friction in a core workflow.`,
+        "Built a clickable prototype and documented design decisions, edge cases, and stakeholder feedback.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 6,
+    };
+  }
+  return {
+    id: "project-role-evidence",
+    title: `Build role proof for ${primarySkill}`,
+    projectName: `${role} Portfolio Project`,
+    stack: `${primarySkill}, ${secondarySkill}, documentation, measurable outcomes`,
+    why: `A project section can prove the missing skill in context and make the ATS match feel credible.`,
+    bullets: [
+      `Built a ${role} project using ${primarySkill} to solve a realistic business problem and document the measurable outcome.`,
+      `Added clear project notes covering goal, approach, tools, stakeholders, and result so recruiters can verify ${primarySkill} quickly.`,
+    ],
+    learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+    impact: 6,
+  };
+}
+
+function secondaryProjectTemplateForContext(context, role, missingSkills) {
+  const learning = modernLearningForContext(context, missingSkills);
+  if (!learning.length) return null;
+  return {
+    id: "project-modern-learning",
+    title: "Interview-ready learning plan",
+    projectName: "Modern Skills Practice Lab",
+    stack: learning.join(", "),
+    why: `Before submitting, learn enough of these tools to explain the project honestly in an interview. Add them only after you build or practice them.`,
+    bullets: [
+      `Completed a practical lab covering ${learning.slice(0, 3).join(", ")} and documented what each tool improves in ${role} work.`,
+      "Prepared interview notes with tradeoffs, common mistakes, and one example of how the skill was applied in the project.",
+    ],
+    learnBeforeSubmit: learning,
+    impact: 5,
+  };
+}
+
+function modernLearningForContext(context, missingSkills) {
+  const normalized = missingSkills.map((item) => cleanDisplayText(item).toLowerCase());
+  const learning = [];
+  const add = (items) => items.forEach((item) => {
+    if (!learning.some((existing) => existing.toLowerCase() === item.toLowerCase())) learning.push(item);
+  });
+  if (context === "ai") add(["ML evaluation metrics", "feature engineering", "model explainability", "MLflow or experiment tracking"]);
+  if (context === "data") add(["SQL window functions", "Power BI/Tableau storytelling", "dbt basics", "dashboard KPI design"]);
+  if (context === "product") add(["user story writing", "prioritization frameworks", "stakeholder mapping", "Jira roadmap basics"]);
+  if (context === "marketing") add(["Google Analytics 4", "SEO keyword research", "A/B testing basics", "campaign attribution"]);
+  if (context === "sales") add(["CRM hygiene", "lead qualification", "pipeline forecasting", "discovery call notes"]);
+  if (context === "finance") add(["variance analysis", "advanced Excel", "reconciliation controls", "forecasting basics"]);
+  if (context === "hr") add(["ATS sourcing", "structured interviewing", "onboarding workflows", "HR metrics"]);
+  if (context === "design") add(["Figma components", "usability testing", "design systems", "accessibility basics"]);
+  if (context === "security") add(["OWASP Top 10", "SIEM basics", "incident triage", "IAM controls"]);
+  if (context === "mobile") add(["app state management", "API integration", "release testing", "mobile UI patterns"]);
+  normalized.forEach((skill) => {
+    if (skill.includes("stakeholder")) add(["stakeholder mapping", "communication plan", "status reporting"]);
+    if (skill.includes("computer")) add(["computer science fundamentals", "data structures basics"]);
+    if (skill.includes("tensorflow")) add(["TensorFlow model training"]);
+    if (skill.includes("pytorch")) add(["PyTorch training loops"]);
+    if (skill.includes("sql")) add(["SQL joins and window functions"]);
+  });
+  return learning.slice(0, 5);
 }
 
 function findBestOldLineForSkill(skill, lines, offset = 0) {
@@ -3126,11 +3450,13 @@ function findBestOldLineForSkill(skill, lines, offset = 0) {
 function findSkillPlacement(resume, skill) {
   const groups = resume?.skills ?? [];
   const rule = inferSkillPlacementRule(skill);
+  const professional = isProfessionalSkillTerm(skill);
   const exactItemGroup = groups.find((group) => (group.items ?? []).some((item) => cleanDisplayText(item).toLowerCase() === cleanDisplayText(skill).toLowerCase()));
   const namedGroup = groups.find((group) => rule.groupPattern.test(group.name || ""));
   const signalGroup = groups.find((group) => (group.items ?? []).some((item) => rule.signalPattern.test(cleanDisplayText(item))));
   const fallbackGroup = groups.find((group) => /technical|skill|core|tools|technology/i.test(group.name || "")) || groups[0];
-  const preferredGroup = exactItemGroup || namedGroup || signalGroup;
+  const exactGroupLooksWrong = exactItemGroup && professional && /(programming|backend|frontend|cloud|devops|ai|ml|machine learning)/i.test(exactItemGroup.name || "");
+  const preferredGroup = exactGroupLooksWrong ? namedGroup || signalGroup : exactItemGroup || namedGroup || signalGroup;
 
   if (preferredGroup) {
     return {
@@ -3181,7 +3507,8 @@ function buildSkillGuidance(skill, jobTitle, section, placement) {
   const role = cleanDisplayText(jobTitle || "this role");
   const groupAction = placement.shouldCreate ? `Because your current skills do not have a clean ${placement.groupName} bucket, create that group instead of forcing this into an unrelated section.` : `This keeps ${skill} beside related skills recruiters expect to scan together.`;
   const sectionLabel = section.toLowerCase();
-  return `If you have real hands-on ${skill} experience, add the skill and support it with the ${sectionLabel} bullet above. That combination is stronger than a keyword-only add for ${role}. ${groupAction}`;
+  const proofType = sectionLabel === "projects" ? "project entry" : `${sectionLabel} bullet`;
+  return `If you can prove ${skill}, support it with the ${proofType} above. That combination is stronger than a keyword-only add for ${role}. ${groupAction}`;
 }
 
 function buildPreviewSkillGroups(items) {
@@ -3198,16 +3525,22 @@ function buildPreviewSkillGroups(items) {
   }));
 }
 
-function buildModelResumeLine(skill, result, oldLine, section) {
+function buildModelResumeLine(skill, result, oldLine, section, resume) {
   const role = sanitizeRoleLabel(result?.job_title);
   const lowered = cleanDisplayText(skill).toLowerCase();
-  const context = detectResumeBulletContext(skill, result);
+  const context = detectResumeBulletContext(skill, result, resume);
+  const projectMode = section === "Projects";
 
+  if (context === "product" && /(stakeholder|requirement|roadmap|agile|scrum|jira|prioritization|user stor)/i.test(skill)) {
+    return projectMode
+      ? `Created a ${role} project plan using ${skill}, stakeholder mapping, priority scoring, and acceptance criteria to show delivery-ready product thinking.`
+      : `Coordinated ${skill} across business, technical, and delivery inputs, improving prioritization clarity and decision follow-through.`;
+  }
   if (lowered === "tensorflow") {
-    return "Developed TensorFlow model training pipelines with Python and Pandas, improving experiment tracking and reducing manual feature-preparation effort.";
+    return "Developed TensorFlow training workflows with clean feature inputs and evaluation tracking, improving model iteration quality and experiment visibility.";
   }
   if (lowered === "pytorch") {
-    return "Implemented PyTorch classification models with custom data loaders and evaluation scripts, improving model iteration speed and validation accuracy.";
+    return "Implemented PyTorch model workflows with custom data loading and validation checks, improving training repeatability and evaluation accuracy.";
   }
   if (["scikit-learn", "sklearn"].includes(lowered)) {
     return "Built Scikit-learn feature engineering and model evaluation pipelines with Pandas, improving baseline accuracy and speeding up ML experimentation.";
@@ -3225,11 +3558,11 @@ function buildModelResumeLine(skill, result, oldLine, section) {
     return `Designed ${skill} data pipelines for scheduled transformations and validation checks, improving ETL reliability and analytics refresh consistency.`;
   }
   if (["aws", "azure", "gcp"].includes(lowered)) {
-    return `Deployed Dockerized FastAPI APIs on ${skill} with PostgreSQL configuration, improving scalability and simplifying release environment setup.`;
+    return `Supported ${skill} delivery work for ${role} projects, improving environment reliability, release visibility, and operational readiness.`;
   }
   if (["docker", "kubernetes", "ci/cd", "jenkins", "github actions"].includes(lowered)) {
     const tech = lowered === "ci/cd" ? "GitHub Actions" : skill;
-    return `Implemented ${tech} pipelines for FastAPI services, automating test runs, Docker builds, and deployment checks to reduce manual release effort.`;
+    return `Implemented ${tech} delivery workflows, automating validation and release checks to reduce manual handoffs and improve deployment confidence.`;
   }
   if (lowered === "microservices") {
     return "Designed FastAPI microservices with PostgreSQL-backed service boundaries, reducing API coupling and improving scalability for reporting workflows.";
@@ -3253,6 +3586,9 @@ function buildModelResumeLine(skill, result, oldLine, section) {
   if (["sql", "postgresql", "bigquery", "snowflake", "pandas", "numpy"].includes(lowered)) {
     return buildDataSkillBullet(skill, lowered);
   }
+  if (context === "frontend") {
+    return `Built ${role} interface improvements with ${skill}, improving usability, consistency, and handoff quality for users and stakeholders.`;
+  }
   if (context === "ai") {
     return `Designed Python model workflows with ${skill}, improving feature processing, evaluation speed, and inference consistency for AI use cases.`;
   }
@@ -3262,11 +3598,35 @@ function buildModelResumeLine(skill, result, oldLine, section) {
   if (context === "cloud") {
     return `Implemented AWS deployment workflows with ${skill}, improving service scalability and reducing manual environment configuration.`;
   }
+  if (context === "product") {
+    return `Translated ${skill} work into clear ${role} priorities, improving stakeholder alignment, delivery focus, and decision quality.`;
+  }
+  if (context === "marketing") {
+    return `Managed ${skill} initiatives for ${role} goals, improving campaign visibility, audience targeting, and conversion-focused reporting.`;
+  }
+  if (context === "sales") {
+    return `Used ${skill} to strengthen ${role} execution, improving pipeline tracking, client follow-up quality, and revenue opportunity visibility.`;
+  }
+  if (context === "finance") {
+    return `Applied ${skill} across ${role} workflows, improving reporting accuracy, reconciliation quality, and audit-ready documentation.`;
+  }
+  if (context === "hr") {
+    return `Used ${skill} in ${role} processes, improving candidate or employee tracking, coordination quality, and operational turnaround time.`;
+  }
+  if (context === "design") {
+    return `Created ${skill} deliverables for ${role} work, improving user clarity, design consistency, and stakeholder review speed.`;
+  }
+  if (context === "security") {
+    return `Applied ${skill} to security workflows, improving risk visibility, issue triage, and control documentation for production teams.`;
+  }
+  if (context === "mobile") {
+    return `Built mobile ${role} improvements with ${skill}, improving app reliability, user flow quality, and release readiness.`;
+  }
   if (oldLine && oldLine.length > 30) {
     const baseLine = oldLine.replace(/[.!?]*$/, "");
-    return `Improved ${baseLine.charAt(0).toLowerCase()}${baseLine.slice(1)} using ${skill}, FastAPI, and PostgreSQL to increase automation and service scalability.`;
+    return `Strengthened ${baseLine.charAt(0).toLowerCase()}${baseLine.slice(1)} using ${skill}, making the impact clearer for ${role} screening.`;
   }
-  return `Developed a ${role} workflow using ${skill}, FastAPI, and PostgreSQL, improving automation, scalability, and request handling.`;
+  return `Delivered ${role} work using ${skill}, improving execution quality, stakeholder clarity, and measurable outcomes.`;
 }
 
 function buildDataSkillBullet(skill, lowered) {
@@ -3297,17 +3657,43 @@ function sanitizeRoleLabel(jobTitle) {
   return role;
 }
 
-function detectResumeBulletContext(skill, result) {
+function detectResumeBulletContext(skill, result, resume) {
+  const skillOnly = cleanDisplayText(skill).toLowerCase();
+  if (/(stakeholder|product management|roadmap|user stories|requirements|agile|scrum|jira|prioritization|release planning)/i.test(skillOnly)) return "product";
+  if (/(seo|sem|campaign|content strategy|social media|email marketing|performance marketing|conversion|crm)/i.test(skillOnly)) return "marketing";
+  if (/(salesforce|lead generation|account management|customer success|client relationship|negotiation|pipeline)/i.test(skillOnly)) return "sales";
+  if (/(financial|accounting|reconciliation|budget|forecast|audit|tax|compliance|risk)/i.test(skillOnly)) return "finance";
+  if (/(recruit|talent acquisition|hr|onboarding|employee|payroll|sourcing|interview)/i.test(skillOnly)) return "hr";
+  if (/(figma|wireframe|prototype|user research|usability|design system|photoshop|illustrator)/i.test(skillOnly)) return "design";
+  if (/(tensorflow|pytorch|keras|scikit|sklearn|langchain|langgraph|llamaindex|autogen|agentic|generative|vector|rag|model|nlp|machine learning|ai)/i.test(skillOnly)) return "ai";
+  if (/(sql|pandas|numpy|dashboard|etl|analytics|tableau|power bi|data)/i.test(skillOnly)) return "data";
+  if (/(react|javascript|typescript|html|css|frontend|ui engineer|web developer)/i.test(skillOnly)) return "frontend";
+  if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|deployment|cloud)/i.test(skillOnly)) return "cloud";
+
   const combined = cleanDisplayText([
     skill,
     result?.job_title,
+    result?.detected_role_family,
+    result?.detected_resume_role_family,
+    resume?.basics?.headline,
+    resume?.basics?.summary,
+    ...(resume?.skills ?? []).map((group) => `${group.name} ${(group.items ?? []).join(" ")}`),
     ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
     ...(result?.missing_keywords ?? []).map((item) => item.keyword),
   ].join(" ")).toLowerCase();
 
   if (/(tensorflow|pytorch|keras|scikit|sklearn|langchain|langgraph|llamaindex|autogen|agentic|generative|vector|rag|model|nlp|machine learning|ai)/i.test(combined)) return "ai";
+  if (/(react|javascript|typescript|html|css|frontend|ui engineer|web developer)/i.test(combined)) return "frontend";
   if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|deployment|cloud)/i.test(combined)) return "cloud";
   if (/(sql|pandas|numpy|dashboard|etl|analytics|tableau|power bi|data)/i.test(combined)) return "data";
+  if (/(product manager|product owner|program manager|project manager|scrum|agile|roadmap|jira|stakeholder|requirements|delivery manager)/i.test(combined)) return "product";
+  if (/(marketing|seo|sem|campaign|content|social media|growth|conversion|brand|email marketing)/i.test(combined)) return "marketing";
+  if (/(sales|account executive|business development|lead generation|crm|salesforce|pipeline|customer success|client relationship)/i.test(combined)) return "sales";
+  if (/(finance|accounting|accountant|audit|tax|reconciliation|budget|forecast|compliance|risk)/i.test(combined)) return "finance";
+  if (/(human resources|hr|recruit|talent acquisition|onboarding|employee|payroll|sourcing|interview)/i.test(combined)) return "hr";
+  if (/(ux|ui designer|product designer|graphic designer|figma|prototype|wireframe|user research|usability|adobe)/i.test(combined)) return "design";
+  if (/(security|cyber|soc|vulnerability|incident|risk assessment|iam|compliance control)/i.test(combined)) return "security";
+  if (/(android|ios|mobile|flutter|react native|kotlin|swift)/i.test(combined)) return "mobile";
   return "backend";
 }
 
@@ -3369,6 +3755,12 @@ function buildSimpleFixes(result, optimization) {
     if (["a/b testing", "ab testing", "experimentation"].includes(normalized)) return "experimentation";
     if (["sql", "power bi", "tableau", "excel", "pandas", "numpy"].includes(normalized)) return "data";
     if (["react", "javascript", "typescript", "node.js", "node", "rest apis", "api", "microservices", "fastapi", "django"].includes(normalized)) return "engineering";
+    if (["product management", "roadmap", "user stories", "requirements", "stakeholder management", "agile", "scrum", "jira", "prioritization"].includes(normalized)) return "product";
+    if (["seo", "sem", "google analytics", "campaign management", "content strategy", "social media", "email marketing", "performance marketing", "conversion optimization", "crm"].includes(normalized)) return "marketing";
+    if (["salesforce", "lead generation", "account management", "customer success", "client relationship", "negotiation", "pipeline management"].includes(normalized)) return "sales";
+    if (["financial analysis", "accounting", "reconciliation", "budgeting", "forecasting", "audit", "taxation", "compliance", "risk analysis"].includes(normalized)) return "finance";
+    if (["recruitment", "talent acquisition", "hr operations", "onboarding", "employee engagement", "payroll", "performance management", "sourcing", "interviewing"].includes(normalized)) return "hr";
+    if (["figma", "wireframing", "prototyping", "user research", "usability testing", "design systems", "photoshop", "illustrator"].includes(normalized)) return "design";
     return "general";
   };
 
@@ -3411,6 +3803,24 @@ function buildSimpleFixes(result, optimization) {
 
     if (skillType === "engineering") {
       return `A clean fix is to connect ${keyword} to shipped work. Add one bullet that shows what you built with it, where it fit in the stack, and the result it delivered.`;
+    }
+    if (skillType === "product") {
+      return `Make ${keyword} visible through product or delivery evidence. Add one bullet showing the decision, stakeholder group, prioritization reason, and outcome.`;
+    }
+    if (skillType === "marketing") {
+      return `Show ${keyword} through campaign evidence. Add one bullet with channel, audience, metric, and what improved.`;
+    }
+    if (skillType === "sales") {
+      return `Tie ${keyword} to pipeline or client outcomes. Add one bullet showing account context, action taken, and measurable progress.`;
+    }
+    if (skillType === "finance") {
+      return `Support ${keyword} with accuracy or control evidence. Add one bullet showing the report, reconciliation, audit, or forecast impact.`;
+    }
+    if (skillType === "hr") {
+      return `Make ${keyword} concrete through people-process evidence. Add one bullet showing hiring, onboarding, employee, or coordination impact.`;
+    }
+    if (skillType === "design") {
+      return `Show ${keyword} as design proof. Add one bullet naming the research, prototype, user flow, or system component and the review outcome.`;
     }
 
     return required
@@ -3632,6 +4042,10 @@ function includesDisplayItem(items, value) {
   return items.some((item) => cleanDisplayText(item).toLowerCase() === key);
 }
 
+function sameDisplayText(left, right) {
+  return cleanDisplayText(left).toLowerCase() === cleanDisplayText(right).toLowerCase();
+}
+
 const GENERIC_NON_SKILL_TERMS = new Set([
   "agent",
   "agents",
@@ -3642,6 +4056,7 @@ const GENERIC_NON_SKILL_TERMS = new Set([
   "collaborative",
   "communication",
   "company",
+  "computer",
   "customer",
   "customers",
   "data-driven",
@@ -3667,12 +4082,12 @@ const GENERIC_NON_SKILL_TERMS = new Set([
   "project",
   "projects",
   "quality",
-  "reporting",
   "requirement",
   "requirements",
   "responsibility",
   "responsibilities",
   "role",
+  "science",
   "solution",
   "solutions",
   "strategy",
@@ -3765,10 +4180,72 @@ const TECH_SKILL_TOKENS = new Set([
   "visualization",
 ]);
 
+const PROFESSIONAL_SKILL_TOKENS = new Set([
+  "abm",
+  "account",
+  "accounting",
+  "adobe",
+  "agile",
+  "analysis",
+  "audit",
+  "budgeting",
+  "campaign",
+  "campaigns",
+  "compliance",
+  "content",
+  "crm",
+  "customer",
+  "design",
+  "documentation",
+  "email",
+  "engagement",
+  "figma",
+  "finance",
+  "forecasting",
+  "growth",
+  "gathering",
+  "hiring",
+  "hr",
+  "interviewing",
+  "jira",
+  "kpi",
+  "lead",
+  "leads",
+  "marketing",
+  "negotiation",
+  "onboarding",
+  "operations",
+  "payroll",
+  "pipeline",
+  "prioritization",
+  "prototyping",
+  "quickbooks",
+  "reconciliation",
+  "recruitment",
+  "reporting",
+  "research",
+  "risk",
+  "roadmap",
+  "sales",
+  "salesforce",
+  "scrum",
+  "seo",
+  "sourcing",
+  "stakeholder",
+  "stories",
+  "strategy",
+  "taxation",
+  "testing",
+  "tally",
+  "usability",
+  "wireframing",
+]);
+
 function hasTechnicalSkillSignal(text) {
   const normalized = cleanDisplayText(text).toLowerCase();
   if (!normalized) return false;
   if (TECH_SKILL_TOKENS.has(normalized)) return true;
+  if (PROFESSIONAL_SKILL_TOKENS.has(normalized)) return true;
   if (/[+/#.]/.test(normalized) || /\d/.test(normalized)) return true;
 
   const tokens = normalized
@@ -3776,7 +4253,18 @@ function hasTechnicalSkillSignal(text) {
     .map((token) => token.trim())
     .filter(Boolean);
 
-  return tokens.some((token) => TECH_SKILL_TOKENS.has(token));
+  return tokens.some((token) => TECH_SKILL_TOKENS.has(token) || PROFESSIONAL_SKILL_TOKENS.has(token));
+}
+
+function isProfessionalSkillTerm(value) {
+  const normalized = cleanDisplayText(value).toLowerCase();
+  if (!normalized) return false;
+  if (PROFESSIONAL_SKILL_TOKENS.has(normalized)) return true;
+  const tokens = normalized
+    .split(/[\s(),/-]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.some((token) => PROFESSIONAL_SKILL_TOKENS.has(token));
 }
 
 function isSkillLikeTerm(value) {

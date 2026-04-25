@@ -2738,6 +2738,7 @@ a {
 .ats-correction-summary span,
 .ats-correction-item span,
 .ats-skill-placement span,
+.ats-project-idea-card span,
 .ats-preview-section-mini strong {
   color: rgba(186, 246, 213, 0.82);
   font-size: 0.74rem;
@@ -2764,6 +2765,19 @@ a {
   display: grid;
   gap: 16px;
   margin-top: 18px;
+}
+
+.ats-project-coach-block {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(120, 146, 177, 0.16);
+}
+
+.ats-project-idea-grid {
+  display: grid;
+  gap: 16px;
 }
 
 .ats-correction-item {
@@ -2795,7 +2809,9 @@ a {
 }
 
 .ats-correction-lines > div,
-.ats-skill-placement {
+.ats-skill-placement,
+.ats-project-idea-columns > div,
+.ats-learning-plan {
   display: grid;
   gap: 8px;
   padding: 14px;
@@ -2806,7 +2822,10 @@ a {
 
 .ats-correction-lines p,
 .ats-skill-placement strong,
-.ats-skill-placement p {
+.ats-skill-placement p,
+.ats-project-idea-card p,
+.ats-project-idea-card li,
+.ats-project-idea-columns strong {
   margin: 0;
   color: rgba(219, 230, 243, 0.84);
   line-height: 1.58;
@@ -2826,6 +2845,34 @@ a {
 .ats-skill-placement p {
   color: rgba(219, 230, 243, 0.78);
   font-weight: 650;
+}
+
+.ats-project-idea-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(12, 28, 42, 0.94), rgba(14, 29, 34, 0.88));
+}
+
+.ats-project-idea-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr);
+  gap: 14px;
+}
+
+.ats-project-idea-card ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ats-project-idea-columns strong,
+.ats-learning-plan p {
+  color: #bbf7d0;
+  font-weight: 800;
 }
 
 .ats-suggested-preview {
@@ -2862,6 +2909,12 @@ a {
 .ats-preview-section-mini {
   display: grid;
   gap: 8px;
+}
+
+.ats-preview-project {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
 }
 
 .ats-preview-section-mini strong {
@@ -3975,7 +4028,8 @@ a {
 
   .ats-correction-summary,
   .ats-correction-topline,
-  .ats-correction-lines {
+  .ats-correction-lines,
+  .ats-project-idea-columns {
     grid-template-columns: 1fr;
   }
 

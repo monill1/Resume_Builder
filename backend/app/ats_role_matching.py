@@ -25,6 +25,16 @@ ROLE_FAMILIES = {
     "ai_engineer": {"ai engineer", "generative ai engineer", "llm engineer", "prompt engineer"},
     "business_analyst": {"business analyst", "product analyst", "operations analyst", "systems analyst"},
     "devops_engineer": {"devops engineer", "site reliability engineer", "sre", "platform engineer", "cloud engineer"},
+    "product_manager": {"product manager", "associate product manager", "product owner", "program manager"},
+    "project_manager": {"project manager", "scrum master", "delivery manager", "project coordinator"},
+    "marketing_specialist": {"marketing specialist", "digital marketing specialist", "seo specialist", "growth marketer"},
+    "sales_specialist": {"sales executive", "sales representative", "account executive", "business development executive"},
+    "finance_accounting": {"financial analyst", "accountant", "finance associate", "accounts payable", "accounts receivable"},
+    "hr_recruiting": {"hr executive", "human resources", "recruiter", "talent acquisition", "people operations"},
+    "design_specialist": {"ui ux designer", "ux designer", "product designer", "graphic designer", "visual designer"},
+    "customer_success": {"customer success manager", "customer support specialist", "technical support engineer"},
+    "cybersecurity": {"cybersecurity analyst", "security engineer", "soc analyst", "information security analyst"},
+    "mobile_developer": {"android developer", "ios developer", "mobile developer", "flutter developer", "react native developer"},
 }
 
 RELATED_ROLE_FAMILIES = {
@@ -37,6 +47,16 @@ RELATED_ROLE_FAMILIES = {
     "machine_learning_engineer": {"ai_engineer", "data_scientist", "backend_engineer"},
     "ai_engineer": {"machine_learning_engineer", "data_scientist"},
     "devops_engineer": {"backend_engineer"},
+    "product_manager": {"business_analyst", "project_manager"},
+    "project_manager": {"product_manager", "business_analyst"},
+    "marketing_specialist": {"sales_specialist"},
+    "sales_specialist": {"marketing_specialist", "customer_success"},
+    "finance_accounting": {"business_analyst", "data_analyst"},
+    "hr_recruiting": {"project_manager"},
+    "design_specialist": {"frontend_engineer", "product_manager"},
+    "customer_success": {"sales_specialist", "project_manager"},
+    "cybersecurity": {"devops_engineer", "backend_engineer"},
+    "mobile_developer": {"frontend_engineer", "full_stack_developer"},
 }
 
 SENIORITY_PATTERNS = {
