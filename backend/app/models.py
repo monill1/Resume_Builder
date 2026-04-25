@@ -496,6 +496,7 @@ class ATSAnalysisResponse(BaseModel):
     parse_preview: str
     comparison_view: List[ATSComparisonItem] = Field(default_factory=list)
     explanation_panel: ATSExplanationPanel
+    analyzed_resume: Optional[ResumePayload] = None
 
 
 class AutoFixEdit(BaseModel):

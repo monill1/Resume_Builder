@@ -4,7 +4,7 @@ import os
 import logging
 import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -72,6 +72,7 @@ from .models import (
     SavedResumeResponse,
 )
 from .pdf_generator import build_resume_pdf
+from .pdf_resume import uploaded_pdf_to_resume
 from .sample_data import SAMPLE_RESUME
 from .services.semantic_matcher import warm_semantic_model
 
@@ -516,6 +517,47 @@ def analyze_ats_match(
             job_description=payload.job_description,
             user_id=int(current_user["id"]),
             profile_id=payload.profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_database_error(exc)
+
+    return analysis
+
+
+@app.post("/api/ats/analyze-pdf", response_model=ATSAnalysisResponse)
+async def analyze_uploaded_pdf_match(
+    job_url: str | None = Form(default=None),
+    job_description: str | None = Form(default=None),
+    target_title: str | None = Form(default=None),
+    profile_id: int | None = Form(default=None),
+    resume_pdf: UploadFile = File(...),
+    current_user: dict[str, object] = Depends(get_current_user),
+) -> ATSAnalysisResponse:
+    try:
+        resume = await uploaded_pdf_to_resume(resume_pdf)
+        job_source = prepare_job_source(
+            job_url=job_url,
+            job_description=job_description,
+            target_title=target_title,
+        )
+        analysis = analyze_resume_against_job(resume, job_source)
+        analysis.analyzed_resume = resume
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Uploaded PDF ATS analysis failed.")
+        raise HTTPException(status_code=422, detail=f"Unable to analyze this PDF resume: {exc}") from exc
+    try:
+        save_ats_analysis(
+            resume=resume,
+            analysis=analysis,
+            job_url=job_url,
+            target_title=target_title,
+            job_description=job_description,
+            user_id=int(current_user["id"]),
+            profile_id=profile_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

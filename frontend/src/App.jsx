@@ -457,10 +457,13 @@ function App() {
   const [atsTargetTitle, setAtsTargetTitle] = useState("");
   const [atsJobUrl, setAtsJobUrl] = useState("");
   const [atsJobDescription, setAtsJobDescription] = useState("");
+  const [atsResumePdf, setAtsResumePdf] = useState(null);
+  const [atsReviewSource, setAtsReviewSource] = useState("editor");
   const [atsLoading, setAtsLoading] = useState(false);
   const [atsFixing, setAtsFixing] = useState(false);
   const [atsStatus, setAtsStatus] = useState("Paste a public job URL, a job description, or both to run a recruiter-style ATS check.");
   const [atsResult, setAtsResult] = useState(null);
+  const [atsResultSource, setAtsResultSource] = useState("editor");
   const [atsOptimization, setAtsOptimization] = useState(null);
   const [hasSavedDraft, setHasSavedDraft] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState(null);
@@ -1335,7 +1338,7 @@ function App() {
     }
   };
 
-  const analyzeAts = async () => {
+  const analyzeEditorResume = async () => {
     const { normalizedJobUrl, trimmedJobDescription, requestBody } = buildAtsRequestPayload();
     if (!normalizedJobUrl && !trimmedJobDescription) {
       setAtsStatus("Add a public job link or paste the job description so the ATS checker has target requirements.");
@@ -1366,6 +1369,7 @@ function App() {
 
       const data = await response.json();
       setAtsResult(data);
+      setAtsResultSource("editor");
       setAtsStatus("ATS analysis complete. Review missing requirements, formatting risk, and exact next edits below.");
     } catch (error) {
       setAtsResult(null);
@@ -1373,6 +1377,62 @@ function App() {
     } finally {
       setAtsLoading(false);
     }
+  };
+
+  const analyzeUploadedPdf = async () => {
+    const { normalizedJobUrl, trimmedJobDescription } = buildAtsRequestPayload();
+    if (!normalizedJobUrl && !trimmedJobDescription) {
+      setAtsStatus("Add a public job link or paste the job description before scoring an uploaded PDF.");
+      return;
+    }
+    if (!atsResumePdf) {
+      setAtsStatus("Choose a resume PDF to upload before running the PDF ATS score.");
+      return;
+    }
+
+    setAtsLoading(true);
+    setAtsOptimization(null);
+    setAtsStatus(`Reading ${atsResumePdf.name}, extracting resume text, and scoring it against the target role...`);
+    try {
+      const formData = new FormData();
+      if (activeProfileId) formData.append("profile_id", String(activeProfileId));
+      if (normalizedJobUrl) formData.append("job_url", normalizedJobUrl);
+      if (trimmedJobDescription) formData.append("job_description", trimmedJobDescription);
+      if (atsTargetTitle.trim()) formData.append("target_title", atsTargetTitle.trim());
+      formData.append("resume_pdf", atsResumePdf);
+
+      const response = await fetch(`${API_BASE_URL}/api/ats/analyze-pdf`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const message = await readErrorMessage(response, "Unable to analyze the uploaded PDF.");
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      setAtsResult(data);
+      setAtsResultSource("pdf");
+      setAtsStatus("PDF ATS analysis complete. The score below is based on text extracted from the uploaded resume PDF.");
+    } catch (error) {
+      setAtsResult(null);
+      setAtsStatus(`PDF ATS analysis failed: ${error.message}`);
+    } finally {
+      setAtsLoading(false);
+    }
+  };
+
+  const analyzeAts = async (sourceOverride) => {
+    const source = sourceOverride === "pdf" || sourceOverride === "editor" ? sourceOverride : atsReviewSource;
+    if (source === "pdf") {
+      setAtsReviewSource("pdf");
+      await analyzeUploadedPdf();
+      return;
+    }
+    setAtsReviewSource("editor");
+    await analyzeEditorResume();
   };
 
   const autoFixResume = async () => {
@@ -1416,6 +1476,7 @@ function App() {
       const resumeChanged = JSON.stringify(normalizedOptimizedResume) !== JSON.stringify(normalizedCurrentResume);
       setResume(normalizedOptimizedResume);
       setAtsResult(data.analysis);
+      setAtsResultSource("editor");
       setAtsOptimization(data);
       setStatus("ATS auto-fix updated the editor data. Review the refreshed resume content and preview.");
       try {
@@ -1767,12 +1828,20 @@ function App() {
               atsTargetTitle={atsTargetTitle}
               atsJobUrl={atsJobUrl}
               atsJobDescription={atsJobDescription}
+              atsResumePdf={atsResumePdf}
+              atsReviewSource={atsReviewSource}
               atsResult={atsResult}
+              atsResultSource={atsResultSource}
               atsOptimization={atsOptimization}
               currentResume={currentResumePayload}
               onTargetTitleChange={setAtsTargetTitle}
               onJobUrlChange={setAtsJobUrl}
               onJobDescriptionChange={setAtsJobDescription}
+              onResumePdfChange={(file) => {
+                setAtsResumePdf(file);
+                setAtsReviewSource(file ? "pdf" : "editor");
+              }}
+              onReviewSourceChange={setAtsReviewSource}
               onAnalyze={analyzeAts}
               onAutoFix={autoFixResume}
               onLoadDemoJob={loadDemoJob}
@@ -2118,12 +2187,17 @@ function ATSWorkspaceSection({
   atsTargetTitle,
   atsJobUrl,
   atsJobDescription,
+  atsResumePdf,
+  atsReviewSource,
   atsResult,
+  atsResultSource,
   atsOptimization,
   currentResume,
   onTargetTitleChange,
   onJobUrlChange,
   onJobDescriptionChange,
+  onResumePdfChange,
+  onReviewSourceChange,
   onAnalyze,
   onAutoFix,
   onLoadDemoJob,
@@ -2136,6 +2210,8 @@ function ATSWorkspaceSection({
     currentResume.education.length,
     currentResume.certifications.length,
   ].filter(Boolean).length;
+  const reviewPdf = atsReviewSource === "pdf";
+  const selectedResumeLabel = reviewPdf ? "Uploaded PDF" : "Resume Editor";
 
   return (
     <section id="ats-workbench" className="ats-section">
@@ -2169,7 +2245,29 @@ function ATSWorkspaceSection({
                 <p className="ats-kicker">ATS Test</p>
                 <h3>Job Target Input</h3>
               </div>
-              <span className="ats-workbench-pill">Connected to live editor data</span>
+              <span className="ats-workbench-pill">Reviewing {selectedResumeLabel}</span>
+            </div>
+
+            <div className="ats-source-switch" role="radiogroup" aria-label="Choose resume source for ATS review">
+              <button
+                type="button"
+                className={`ats-source-option ${!reviewPdf ? "is-active" : ""}`}
+                onClick={() => onReviewSourceChange("editor")}
+                aria-pressed={!reviewPdf}
+              >
+                <span>Resume Editor</span>
+                <strong>Score current editor data</strong>
+              </button>
+              <button
+                type="button"
+                className={`ats-source-option ${reviewPdf ? "is-active" : ""}`}
+                onClick={() => onReviewSourceChange("pdf")}
+                disabled={!atsResumePdf}
+                aria-pressed={reviewPdf}
+              >
+                <span>Uploaded PDF</span>
+                <strong>{atsResumePdf ? "Score uploaded PDF text" : "Upload PDF to enable"}</strong>
+              </button>
             </div>
 
             <div className="grid two-col ats-input-grid">
@@ -2195,11 +2293,42 @@ function ATSWorkspaceSection({
               spellCheck={true}
             />
 
+            <div className="ats-pdf-upload-card">
+              <div className="ats-pdf-upload-copy">
+                <p className="ats-kicker">Resume PDF Upload</p>
+                <h4>Score an existing resume PDF</h4>
+                <p>{atsResumePdf ? atsResumePdf.name : "Upload a text-based PDF resume and score it against the same target role."}</p>
+              </div>
+              <div className="ats-pdf-upload-actions">
+                <label className="ui-btn ui-btn-secondary ats-file-button">
+                  Choose PDF
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(event) => onResumePdfChange(event.target.files?.[0] || null)}
+                  />
+                </label>
+                {atsResumePdf ? (
+                  <Button variant="ghost" onClick={() => onResumePdfChange(null)}>
+                    Clear
+                  </Button>
+                ) : null}
+                <Button variant="secondary" onClick={() => onAnalyze("pdf")} disabled={atsLoading || !atsResumePdf}>
+                  {atsLoading && reviewPdf ? "Reading..." : "Review PDF"}
+                </Button>
+              </div>
+            </div>
+
             <div className="ats-toolbar">
-              <Button variant="primary" className="ats-action-btn" onClick={onAnalyze} disabled={atsLoading}>
-                {atsLoading ? "Analyzing..." : "Run ATS Test"}
+              <Button
+                variant="primary"
+                className="ats-action-btn"
+                onClick={() => onAnalyze(atsReviewSource)}
+                disabled={atsLoading || (reviewPdf && !atsResumePdf)}
+              >
+                {atsLoading ? (reviewPdf ? "Reading PDF..." : "Analyzing...") : `Run ATS Test on ${selectedResumeLabel}`}
               </Button>
-              <Button variant="secondary" className="ats-action-btn" onClick={onAutoFix} disabled={atsLoading || atsFixing}>
+              <Button variant="secondary" className="ats-action-btn" onClick={onAutoFix} disabled={atsLoading || atsFixing || reviewPdf}>
                 {atsFixing ? "Fixing..." : "Auto Fix Score"}
               </Button>
               <Button variant="secondary" onClick={onLoadDemoJob}>
@@ -2212,26 +2341,40 @@ function ATSWorkspaceSection({
                 If URL scraping fails, the pasted job description is used automatically for scoring.
               </p>
               <p className="field-help ats-help">
-                Auto Fix updates the live resume using evidence already present in your current resume.
+                Auto Fix is available only for Resume Editor reviews because it updates the live editor data.
+              </p>
+              <p className="field-help ats-help">
+                PDF scoring works best with exported text PDFs; scanned image resumes may not have readable text.
               </p>
             </div>
           </div>
 
           <div className="ats-sidekick-card">
             <div className="ats-sidekick-block">
-              <p className="ats-kicker">Connected Resume</p>
-              <h3>Current editor data used for ATS</h3>
+              <p className="ats-kicker">Selected Resume</p>
+              <h3>{reviewPdf ? "Uploaded PDF used for ATS" : "Current editor data used for ATS"}</h3>
               <div className="ats-resume-sync-card">
-                <strong>{currentResume.basics.full_name || "Untitled resume"}</strong>
-                <p>{currentResume.basics.headline?.trim() || "No headline added yet."}</p>
+                <strong>{reviewPdf ? atsResumePdf?.name || "No PDF selected" : currentResume.basics.full_name || "Untitled resume"}</strong>
+                <p>{reviewPdf ? "The ATS score will use text extracted from the selected PDF." : currentResume.basics.headline?.trim() || "No headline added yet."}</p>
                 <div className="ats-sync-metrics">
-                  <span>{currentResume.experience.length} experience</span>
-                  <span>{currentResume.projects.length} projects</span>
-                  <span>{currentResume.skills.length} skill groups</span>
-                  <span>{filledSectionCount} filled sections</span>
+                  {reviewPdf ? (
+                    <>
+                      <span>PDF review</span>
+                      <span>{atsResumePdf ? "file ready" : "upload needed"}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{currentResume.experience.length} experience</span>
+                      <span>{currentResume.projects.length} projects</span>
+                      <span>{currentResume.skills.length} skill groups</span>
+                      <span>{filledSectionCount} filled sections</span>
+                    </>
+                  )}
                 </div>
                 <p className="ats-sync-note">
-                  Every ATS run automatically uses the latest content from the editor section. No manual copy or save step is needed.
+                  {reviewPdf
+                    ? "Run ATS Test will score the uploaded PDF, not the resume editor."
+                    : "Run ATS Test will score the latest content from the editor section."}
                 </p>
               </div>
             </div>
@@ -2262,7 +2405,9 @@ function ATSWorkspaceSection({
                   <h3>Simple ATS dashboard</h3>
                 </div>
                 <div className="ats-results-actions">
-                  <span className="ats-workbench-pill is-result">Latest analysis loaded</span>
+                  <span className="ats-workbench-pill is-result">
+                    {atsResultSource === "pdf" ? "Uploaded PDF analysis loaded" : "Latest editor analysis loaded"}
+                  </span>
                 </div>
               </div>
               <ATSSimpleResultPanel
@@ -2270,8 +2415,9 @@ function ATSWorkspaceSection({
                 optimization={atsOptimization}
                 currentResume={currentResume}
                 onAutoFix={onAutoFix}
-                autoFixDisabled={atsLoading || atsFixing}
+                autoFixDisabled={atsLoading || atsFixing || atsResultSource === "pdf"}
                 autoFixing={atsFixing}
+                resultSource={atsResultSource}
               />
             </>
           ) : (
@@ -2819,9 +2965,10 @@ function BulletListEditor({ label, items, addLabel, onChange, onAdd, onRemove })
   );
 }
 
-function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, autoFixDisabled, autoFixing }) {
+function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, autoFixDisabled, autoFixing, resultSource = "editor" }) {
   const overallScore = normalizeScore(result.overall_ats_score ?? result.overall_score);
   const status = simpleAtsStatus(overallScore);
+  const analyzedResume = resultSource === "pdf" && result.analyzed_resume ? normalizeResumeData(result.analyzed_resume) : currentResume;
   const metrics = [
     { label: "Job Match", value: normalizeScore(result.job_match_score ?? result.overall_score), tone: "blue" },
     { label: "Keyword Match", value: normalizeScore(result.section_scores?.keyword_coverage ?? result.section_scores?.skills_match), tone: "green" },
@@ -2838,7 +2985,7 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
   const roleFits = buildSimpleRoleFit(result, skills);
   const summary = buildSimpleAtsSummary(result, status, fixes.length, optimization);
   const actionPlanLabel = allFixes.length > fixes.length ? `Showing ${fixes.length} of ${allFixes.length}` : `${fixes.length} item${fixes.length === 1 ? "" : "s"}`;
-  const correctionPlan = buildAtsCorrectionPlan(result, currentResume, overallScore);
+  const correctionPlan = buildAtsCorrectionPlan(result, analyzedResume, overallScore);
 
   return (
     <div className="ats-simple-result">
@@ -2859,7 +3006,9 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
             <p className="ats-simple-summary">{summary}</p>
             <Button variant="primary" className="ats-simple-cta" onClick={onAutoFix} disabled={autoFixDisabled}>
               <span className="ats-simple-cta-sheen" aria-hidden="true" />
-              <span className="ats-simple-cta-text">{autoFixing ? "Fixing..." : "Fix My Resume Automatically"}</span>
+              <span className="ats-simple-cta-text">
+                {resultSource === "pdf" ? "Auto Fix Uses Editor Resume" : autoFixing ? "Fixing..." : "Fix My Resume Automatically"}
+              </span>
             </Button>
           </div>
         </div>
@@ -2974,18 +3123,6 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
         </section>
       ) : null}
 
-      {correctionPlan.items.length ? (
-        <section className="ats-simple-card ats-preview-card">
-          <div className="ats-simple-section-head">
-            <div>
-              <p className="ats-simple-label">ATS Preview</p>
-              <h4>Resume Preview With Proposed Green Changes</h4>
-            </div>
-            <span className="ats-simple-pill neutral">Editor untouched</span>
-          </div>
-          <AtsSuggestedResumePreview resume={currentResume} correctionPlan={correctionPlan} />
-        </section>
-      ) : null}
     </div>
   );
 }
@@ -3071,91 +3208,6 @@ function SimpleFixItem({ item }) {
   );
 }
 
-function AtsSuggestedResumePreview({ resume, correctionPlan }) {
-  const basics = resume?.basics ?? {};
-  const firstExperience = (resume?.experience ?? [])[0];
-  const firstProject = (resume?.projects ?? [])[0];
-  const skillGroups = correctionPlan.skillGroups?.length
-    ? correctionPlan.skillGroups
-    : [{ groupName: correctionPlan.skillGroupName, skillLine: correctionPlan.skillLine }];
-
-  return (
-    <div className="ats-suggested-preview">
-      <div className="ats-preview-resume-head">
-        <h5>{basics.full_name || "Resume preview"}</h5>
-        <p>{basics.headline || correctionPlan.targetRole || "Targeted resume"}</p>
-      </div>
-
-      {basics.summary ? (
-        <div className="ats-preview-section-mini">
-          <strong>Summary</strong>
-          <p>{stripRichText(basics.summary)}</p>
-        </div>
-      ) : null}
-
-      <div className="ats-preview-section-mini">
-        <strong>Skills</strong>
-        {skillGroups.map((group) => (
-          <p key={`preview-skill-${group.groupName}`}>
-            <span>{group.groupName}: </span>
-            <mark>{group.skillLine}</mark>
-          </p>
-        ))}
-      </div>
-
-      {firstExperience ? (
-        <div className="ats-preview-section-mini">
-          <strong>Experience</strong>
-          <p>{[firstExperience.role, firstExperience.company].filter(Boolean).join(" - ")}</p>
-          <ul>
-            {(firstExperience.achievements ?? []).filter(Boolean).slice(0, 2).map((line, index) => (
-              <li key={`existing-exp-${index}`}>{stripRichText(line)}</li>
-            ))}
-            {correctionPlan.previewBullets.slice(0, 3).map((line, index) => (
-              <li className="is-proposed" key={`proposed-exp-${index}`}>
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : firstProject ? (
-        <div className="ats-preview-section-mini">
-          <strong>Projects</strong>
-          <p>{firstProject.name}</p>
-          <ul>
-            {correctionPlan.previewBullets.slice(0, 3).map((line, index) => (
-              <li className="is-proposed" key={`proposed-project-${index}`}>
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {correctionPlan.projectIdeas.length ? (
-        <div className="ats-preview-section-mini">
-          <strong>Projects</strong>
-          {correctionPlan.projectIdeas.slice(0, 2).map((project) => (
-            <div className="ats-preview-project" key={`preview-project-${project.id}`}>
-              <p>
-                <mark>{project.projectName}</mark>
-              </p>
-              <p>{project.stack}</p>
-              <ul>
-                {project.bullets.slice(0, 2).map((bullet) => (
-                  <li className="is-proposed" key={`preview-project-bullet-${project.id}-${bullet}`}>
-                    {bullet}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function buildAtsCorrectionPlan(result, resume, overallScore) {
   const skills = uniqueDisplayItems([
     ...(result.missing_required_skills ?? []).map((item) => item.keyword),
@@ -3171,7 +3223,7 @@ function buildAtsCorrectionPlan(result, resume, overallScore) {
     const section = shouldPreferProject || oldLine.section === "projects" ? "Projects" : "Experience";
     const action = oldLine.synthetic || shouldPreferProject ? `Add to ${section}` : `Rewrite in ${section}`;
     const placement = findSkillPlacement(resume, skill);
-    const newLine = buildModelResumeLine(skill, result, oldLine.text, section, resume);
+    const newLine = buildModelResumeLine(skill, result, oldLine, section, resume);
     const impact = estimateSkillImpact(skill, result, index);
 
     return {
@@ -3212,16 +3264,27 @@ function collectResumeEvidenceLines(resume) {
   (resume?.experience ?? []).forEach((item, itemIndex) => {
     (item.achievements ?? []).forEach((achievement, lineIndex) => {
       const text = cleanDisplayText(stripRichText(achievement));
-      if (text) lines.push({ text, section: "experience", itemIndex, lineIndex });
+      if (isUsefulResumeEvidenceLine(text)) lines.push({ text, section: "experience", itemIndex, lineIndex });
     });
   });
   (resume?.projects ?? []).forEach((item, itemIndex) => {
     (item.highlights ?? []).forEach((highlight, lineIndex) => {
       const text = cleanDisplayText(stripRichText(highlight));
-      if (text) lines.push({ text, section: "projects", itemIndex, lineIndex });
+      if (isUsefulResumeEvidenceLine(text)) lines.push({ text, section: "projects", itemIndex, lineIndex });
     });
   });
   return lines;
+}
+
+function isUsefulResumeEvidenceLine(text) {
+  const cleaned = cleanDisplayText(text);
+  if (cleaned.length < 38) return false;
+  const lowered = cleaned.toLowerCase();
+  if (/^(software engineer|developer|intern|hyderabad|india|remote|present|education|skills|projects)\b/.test(lowered) && cleaned.split(/\s+/).length <= 8) return false;
+  if (!/\b(built|created|developed|designed|implemented|managed|led|optimized|automated|improved|delivered|trained|analyzed|deployed|integrated|configured|reduced|increased|generated|documented|collaborated|worked|owned|launched|maintained)\b/i.test(cleaned)) {
+    return false;
+  }
+  return true;
 }
 
 function shouldSuggestProjectEvidence(skill, context, result, resume) {
@@ -3237,14 +3300,108 @@ function shouldSuggestProjectEvidence(skill, context, result, resume) {
 function buildSuggestedProjectIdeas(result, resume, skills) {
   const role = sanitizeRoleLabel(result?.job_title);
   const context = detectResumeBulletContext(skills.join(" "), result, resume);
-  const missing = uniqueDisplayItems(skills).slice(0, 6);
-  const primarySkill = missing[0] || "role-specific skills";
-  const secondarySkill = missing[1] || role;
-  const project = projectTemplateForContext(context, role, primarySkill, secondarySkill, missing);
-  const secondaryProject = secondaryProjectTemplateForContext(context, role, missing);
-  return [project, secondaryProject]
+  const missing = uniqueDisplayItems(skills).filter(isSkillLikeTerm).slice(0, 10);
+  const resumeSummary = cleanDisplayText([resume?.basics?.headline, resume?.basics?.summary].join(" "));
+  const projectFocuses = buildTailoredProjectFocuses(context, role, missing, result, resumeSummary);
+  const tailoredProjects = projectFocuses.map((focus, index) => buildCoachProjectIdea(focus, role, context, missing, result, resume, index));
+  const fallbackProject = projectTemplateForContext(context, role, missing[0] || "role-specific skills", missing[1] || role, missing);
+  return [...tailoredProjects, fallbackProject]
     .filter(Boolean)
     .filter((item, index, list) => list.findIndex((candidate) => candidate.projectName === item.projectName) === index);
+}
+
+function buildTailoredProjectFocuses(context, role, missingSkills, result, resumeSummary) {
+  const requirements = uniqueDisplayItems([
+    ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
+    ...(result?.missing_responsibilities ?? []).map((item) => item.requirement || item.responsibility || item.text),
+    ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
+  ]).slice(0, 6);
+  const hasTeaching = /trainer|training|teaching|mentor|instructor|education/i.test(`${role} ${resumeSummary}`);
+  const hasFullstack = /fullstack|full stack|react|node|frontend|backend|api/i.test(`${role} ${resumeSummary} ${missingSkills.join(" ")}`);
+  const hasAgentic = /agentic|generative|langchain|rag|llm|vector|ai/i.test(`${role} ${requirements.join(" ")} ${missingSkills.join(" ")}`);
+  const hasCloud = /aws|azure|gcp|docker|kubernetes|deployment|cloud|ci\/cd/i.test(`${requirements.join(" ")} ${missingSkills.join(" ")}`);
+  const hasData = /sql|analytics|dashboard|pandas|numpy|reporting|data/i.test(`${requirements.join(" ")} ${missingSkills.join(" ")}`);
+
+  const focuses = [];
+  const push = (focus) => {
+    if (!focuses.some((item) => item.id === focus.id)) focuses.push(focus);
+  };
+
+  if (hasAgentic || context === "ai") {
+    push({ id: "agentic-training-platform", theme: "AI training platform", primary: "LangChain", secondary: "RAG", outcome: "learner feedback quality" });
+    push({ id: "resume-jd-intelligence", theme: "resume-to-JD intelligence", primary: "NLP", secondary: "model evaluation", outcome: "match explanation accuracy" });
+  }
+  if (hasTeaching) {
+    push({ id: "technical-training-lab", theme: "technical trainer lab", primary: "curriculum design", secondary: "hands-on labs", outcome: "course completion readiness" });
+  }
+  if (hasFullstack || context === "backend" || context === "frontend") {
+    push({ id: "fullstack-role-portal", theme: "full-stack role portal", primary: "React", secondary: "FastAPI", outcome: "end-to-end workflow completion" });
+  }
+  if (hasCloud || context === "cloud") {
+    push({ id: "cloud-release-system", theme: "cloud release system", primary: "Docker", secondary: "CI/CD", outcome: "release reliability" });
+  }
+  if (hasData || context === "data") {
+    push({ id: "analytics-decision-board", theme: "analytics decision board", primary: "SQL", secondary: "dashboarding", outcome: "decision turnaround time" });
+  }
+
+  if (!focuses.length) {
+    push({ id: `${context}-portfolio-proof`, theme: `${role} portfolio proof`, primary: missingSkills[0] || "core role skill", secondary: missingSkills[1] || "documentation", outcome: "screening confidence" });
+  }
+
+  return focuses.slice(0, 3).map((focus, index) => ({
+    ...focus,
+    primary: missingSkills[index * 2] || focus.primary,
+    secondary: missingSkills[index * 2 + 1] || focus.secondary,
+    requirements,
+  }));
+}
+
+function buildCoachProjectIdea(focus, role, context, missingSkills, result, resume, index) {
+  const projectName = titleCaseProjectName(focus.theme);
+  const tools = uniqueDisplayItems([
+    focus.primary,
+    focus.secondary,
+    ...missingSkills.slice(index, index + 4),
+    ...defaultToolsForContext(context, focus.id),
+  ]).slice(0, 7);
+  const roleNoun = role.replace(/\b(role|job)\b/gi, "").trim() || "target role";
+  const requirementText = focus.requirements?.[0] || `requirements for ${roleNoun}`;
+  const resumeAnchor = cleanDisplayText(resume?.basics?.headline || resume?.experience?.[0]?.role || resume?.projects?.[0]?.name || roleNoun);
+
+  return {
+    id: `coach-${focus.id}`,
+    title: `Build targeted proof for ${focus.primary}`,
+    projectName,
+    stack: tools.join(", "),
+    why: `This is tailored for ${roleNoun}: it turns your current ${resumeAnchor} profile into proof for ${focus.primary}, ${focus.secondary}, and the JD requirement around ${requirementText}.`,
+    bullets: [
+      `Built ${projectName} using ${tools.slice(0, 3).join(", ")} to solve a ${roleNoun} workflow tied to ${requirementText}.`,
+      `Designed the core flow, data model, and validation checks so users can complete the task end-to-end with clear error handling and traceable outputs.`,
+      `Added measurable evaluation using ${focus.outcome}, before/after test cases, and a short decision log explaining tradeoffs, limitations, and next improvements.`,
+      `Documented setup steps, screenshots, sample inputs, and recruiter-ready notes so the project can be reviewed quickly from the resume or GitHub README.`,
+    ],
+    learnBeforeSubmit: uniqueDisplayItems([...modernLearningForContext(context, missingSkills), ...tools]).slice(0, 6),
+    impact: Math.max(6, 9 - index),
+  };
+}
+
+function defaultToolsForContext(context, focusId) {
+  if (focusId.includes("agentic")) return ["Python", "FastAPI", "Vector DB", "prompt evaluation"];
+  if (focusId.includes("training")) return ["lesson plan", "assessment rubric", "demo app"];
+  if (focusId.includes("fullstack")) return ["PostgreSQL", "REST APIs", "authentication"];
+  if (focusId.includes("cloud")) return ["GitHub Actions", "AWS", "monitoring"];
+  if (focusId.includes("analytics")) return ["Pandas", "Power BI", "KPI metrics"];
+  if (context === "ai") return ["Python", "Scikit-learn", "evaluation metrics"];
+  if (context === "data") return ["SQL", "Pandas", "dashboard"];
+  if (context === "frontend") return ["React", "TypeScript", "API integration"];
+  return ["documentation", "test cases", "measurable outcome"];
+}
+
+function titleCaseProjectName(value) {
+  return cleanDisplayText(value)
+    .split(" ")
+    .map((word) => word ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : "")
+    .join(" ");
 }
 
 function projectTemplateForContext(context, role, primarySkill, secondarySkill, missingSkills) {
@@ -3431,7 +3588,7 @@ function modernLearningForContext(context, missingSkills) {
 function findBestOldLineForSkill(skill, lines, offset = 0) {
   if (!lines.length) {
     return {
-      text: "No matching resume bullet found yet. Add a new evidence bullet instead of only adding a keyword.",
+      text: `No existing resume bullet proves ${skill} yet. Add a new evidence bullet instead of forcing this keyword into an unrelated line.`,
       section: "experience",
       synthetic: true,
     };
@@ -3444,7 +3601,12 @@ function findBestOldLineForSkill(skill, lines, offset = 0) {
     return { ...line, score };
   });
   scored.sort((left, right) => right.score - left.score || left.text.length - right.text.length);
-  return scored[0].score > 0 ? scored[0] : scored[offset % scored.length];
+  if (scored[0].score > 0) return scored[0];
+  return {
+    text: `No existing resume bullet proves ${skill} yet. Add a new evidence bullet instead of forcing this keyword into an unrelated line.`,
+    section: "projects",
+    synthetic: true,
+  };
 }
 
 function findSkillPlacement(resume, skill) {
@@ -3508,7 +3670,7 @@ function buildSkillGuidance(skill, jobTitle, section, placement) {
   const groupAction = placement.shouldCreate ? `Because your current skills do not have a clean ${placement.groupName} bucket, create that group instead of forcing this into an unrelated section.` : `This keeps ${skill} beside related skills recruiters expect to scan together.`;
   const sectionLabel = section.toLowerCase();
   const proofType = sectionLabel === "projects" ? "project entry" : `${sectionLabel} bullet`;
-  return `If you can prove ${skill}, support it with the ${proofType} above. That combination is stronger than a keyword-only add for ${role}. ${groupAction}`;
+  return `Use the suggested ${proofType} only after you can honestly explain or build it. This is stronger than a keyword-only add for ${role} because it gives ATS and recruiters proof, not just a term. ${groupAction}`;
 }
 
 function buildPreviewSkillGroups(items) {
@@ -3530,6 +3692,12 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
   const lowered = cleanDisplayText(skill).toLowerCase();
   const context = detectResumeBulletContext(skill, result, resume);
   const projectMode = section === "Projects";
+  const evidenceAnchor = inferEvidenceAnchor(result, resume);
+  const oldText = cleanDisplayText(oldLine?.text || oldLine);
+
+  if (oldLine?.synthetic) {
+    return buildNewEvidenceBullet(skill, result, resume, context, section);
+  }
 
   if (context === "product" && /(stakeholder|requirement|roadmap|agile|scrum|jira|prioritization|user stor)/i.test(skill)) {
     return projectMode
@@ -3558,11 +3726,11 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
     return `Designed ${skill} data pipelines for scheduled transformations and validation checks, improving ETL reliability and analytics refresh consistency.`;
   }
   if (["aws", "azure", "gcp"].includes(lowered)) {
-    return `Supported ${skill} delivery work for ${role} projects, improving environment reliability, release visibility, and operational readiness.`;
+    return `Deployed ${evidenceAnchor} workflows on ${skill}, configuring environment settings, release checks, and access notes to improve operational readiness.`;
   }
   if (["docker", "kubernetes", "ci/cd", "jenkins", "github actions"].includes(lowered)) {
     const tech = lowered === "ci/cd" ? "GitHub Actions" : skill;
-    return `Implemented ${tech} delivery workflows, automating validation and release checks to reduce manual handoffs and improve deployment confidence.`;
+    return `Containerized and automated ${evidenceAnchor} delivery with ${tech}, adding validation checks and rollback notes to make releases easier to verify.`;
   }
   if (lowered === "microservices") {
     return "Designed FastAPI microservices with PostgreSQL-backed service boundaries, reducing API coupling and improving scalability for reporting workflows.";
@@ -3573,11 +3741,11 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
   }
   if (["langchain", "langgraph", "llamaindex", "autogen", "agentic ai"].includes(lowered)) {
     const tech = lowered === "agentic ai" ? "LangChain" : skill;
-    return `Built a ${tech} agent workflow with FastAPI tool-calling and vector retrieval, automating multi-step recommendation tasks and improving response relevance.`;
+    return `Built a ${tech} agent workflow with tool-calling, retrieval context, and response checks to automate multi-step ${role} support tasks.`;
   }
   if (["vector db", "vectordb", "pinecone", "chromadb", "faiss", "rag"].includes(lowered)) {
     const tech = lowered === "vector db" || lowered === "vectordb" || lowered === "rag" ? "FAISS" : skill;
-    return `Implemented a ${tech}-backed retrieval pipeline with Python and FastAPI, improving semantic search accuracy for document-based recommendations.`;
+    return `Implemented a ${tech}-backed retrieval pipeline with chunking, metadata filters, and answer citation checks to improve document-grounded recommendations.`;
   }
   if (["power bi", "tableau", "looker", "data visualization", "excel"].includes(lowered)) {
     const tech = lowered === "data visualization" ? "Power BI" : skill;
@@ -3590,13 +3758,13 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
     return `Built ${role} interface improvements with ${skill}, improving usability, consistency, and handoff quality for users and stakeholders.`;
   }
   if (context === "ai") {
-    return `Designed Python model workflows with ${skill}, improving feature processing, evaluation speed, and inference consistency for AI use cases.`;
+    return `Designed ${skill} workflows for ${evidenceAnchor}, including input preparation, evaluation cases, and explainable outputs for reviewer trust.`;
   }
   if (context === "data") {
-    return `Built SQL and Pandas analysis pipelines with ${skill}, improving data accuracy and reducing manual reporting effort.`;
+    return `Built ${skill} analysis workflows for ${evidenceAnchor}, cleaning source data, defining KPIs, and summarizing insights for stakeholder review.`;
   }
   if (context === "cloud") {
-    return `Implemented AWS deployment workflows with ${skill}, improving service scalability and reducing manual environment configuration.`;
+    return `Implemented ${skill} deployment workflows for ${evidenceAnchor}, documenting configuration, validation, and monitoring steps for repeatable releases.`;
   }
   if (context === "product") {
     return `Translated ${skill} work into clear ${role} priorities, improving stakeholder alignment, delivery focus, and decision quality.`;
@@ -3622,11 +3790,45 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
   if (context === "mobile") {
     return `Built mobile ${role} improvements with ${skill}, improving app reliability, user flow quality, and release readiness.`;
   }
-  if (oldLine && oldLine.length > 30) {
-    const baseLine = oldLine.replace(/[.!?]*$/, "");
+  if (oldText && oldText.length > 30) {
+    const baseLine = oldText.replace(/[.!?]*$/, "");
     return `Strengthened ${baseLine.charAt(0).toLowerCase()}${baseLine.slice(1)} using ${skill}, making the impact clearer for ${role} screening.`;
   }
   return `Delivered ${role} work using ${skill}, improving execution quality, stakeholder clarity, and measurable outcomes.`;
+}
+
+function buildNewEvidenceBullet(skill, result, resume, context, section) {
+  const role = sanitizeRoleLabel(result?.job_title);
+  const anchor = inferEvidenceAnchor(result, resume);
+  const lowered = cleanDisplayText(skill).toLowerCase();
+  const projectPrefix = section === "Projects" ? "Build and add a project bullet: " : "Add a work bullet only if true: ";
+
+  if (["aws", "azure", "gcp", "docker", "kubernetes", "ci/cd", "github actions"].includes(lowered)) {
+    return `${projectPrefix}Created a deployment workflow for ${anchor} using ${skill}, documenting environment setup, validation checks, and release notes to prove hands-on delivery experience.`;
+  }
+  if (["python", "machine learning", "scikit-learn", "tensorflow", "pytorch", "nlp"].includes(lowered)) {
+    return `${projectPrefix}Built a Python ML workflow for ${anchor}, covering data preparation, model evaluation, error analysis, and README notes explaining the business use case.`;
+  }
+  if (["langchain", "langgraph", "llamaindex", "autogen", "agentic ai", "rag", "vector db"].includes(lowered)) {
+    return `${projectPrefix}Built an agentic AI prototype for ${anchor} with retrieval, tool-calling, prompt tests, and citations so the project demonstrates real ${skill} usage.`;
+  }
+  if (context === "data") {
+    return `${projectPrefix}Built an analytics workflow for ${anchor} using ${skill}, cleaning source data, defining KPIs, and summarizing insights with a dashboard or notebook.`;
+  }
+  if (context === "frontend" || context === "backend") {
+    return `${projectPrefix}Implemented a ${role} feature for ${anchor} using ${skill}, including API flow, validation, test cases, and a short demo note for reviewers.`;
+  }
+  return `${projectPrefix}Built a focused ${role} project using ${skill}, with problem statement, implementation steps, validation evidence, and measurable outcome documented in the project README.`;
+}
+
+function inferEvidenceAnchor(result, resume) {
+  const projectName = cleanDisplayText(resume?.projects?.[0]?.name);
+  if (projectName && !/uploaded pdf projects?/i.test(projectName)) return projectName;
+  const role = cleanDisplayText(resume?.experience?.[0]?.role);
+  const company = cleanDisplayText(resume?.experience?.[0]?.company);
+  if (role && company && !/uploaded pdf/i.test(company)) return `${role} work at ${company}`;
+  if (role) return role;
+  return sanitizeRoleLabel(result?.job_title);
 }
 
 function buildDataSkillBullet(skill, lowered) {
