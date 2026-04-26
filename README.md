@@ -19,10 +19,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8005
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8007
 ```
 
-Backend URL: `http://127.0.0.1:8005`
+Backend URL: `http://127.0.0.1:8007`
 
 The backend reads `DATABASE_URL` from `backend/.env`. For a local PostgreSQL database, use:
 
@@ -56,7 +56,7 @@ Frontend URL: `http://127.0.0.1:5174`
 Example:
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8005
+VITE_API_BASE_URL=http://127.0.0.1:8007
 ALLOWED_ORIGINS=http://localhost:5174,http://127.0.0.1:5174
 DATABASE_URL=postgresql://postgres:your_password@localhost:5432/Resume
 ```
@@ -84,7 +84,7 @@ Run the backend on all interfaces:
 
 ```bash
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8005
+uvicorn app.main:app --host 0.0.0.0 --port 8007
 ```
 
 Run the frontend so other devices can open it:
@@ -97,12 +97,12 @@ npm run dev -- --host 0.0.0.0 --port 5174
 Then open it from another device with your computer's local IP:
 
 - Frontend: `http://YOUR_LOCAL_IP:5174`
-- Backend: `http://YOUR_LOCAL_IP:8005`
+- Backend: `http://YOUR_LOCAL_IP:8007`
 
 Set:
 
 ```bash
-VITE_API_BASE_URL=http://YOUR_LOCAL_IP:8005
+VITE_API_BASE_URL=http://YOUR_LOCAL_IP:8007
 ALLOWED_ORIGINS=http://YOUR_LOCAL_IP:5174
 ```
 

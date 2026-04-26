@@ -108,7 +108,7 @@ def get_semantic_model() -> Any:
         try:
             from sentence_transformers import SentenceTransformer
 
-            _MODEL = SentenceTransformer(MODEL_NAME)
+            _MODEL = SentenceTransformer(MODEL_NAME, local_files_only=True)
         except Exception:
             _MODEL_LOAD_FAILED = True
             raise
@@ -247,7 +247,7 @@ def _score_for_similarity(similarity: float) -> int:
 
 def _should_use_hf_model() -> bool:
     engine = os.getenv(SEMANTIC_ENGINE_ENV, "auto").strip().lower()
-    if engine in {"0", "false", "off", "fallback", "tfidf", "local"}:
+    if engine in {"0", "false", "off", "fallback", "tfidf", "local", "rules"}:
         return False
     if engine in {"1", "true", "on", "hf", "huggingface", "sentence-transformer"}:
         return True

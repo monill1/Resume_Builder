@@ -74,6 +74,7 @@ from .models import (
 from .pdf_generator import build_resume_pdf
 from .pdf_resume import uploaded_pdf_to_resume
 from .sample_data import SAMPLE_RESUME
+from .rag_service import warm_rag_index
 from .services.semantic_matcher import warm_semantic_model
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,10 @@ def startup() -> None:
         warm_semantic_model()
     except Exception as exc:
         logger.warning("Semantic matcher model preload skipped: %s", exc)
+    try:
+        warm_rag_index()
+    except Exception as exc:
+        logger.warning("RAG index preload skipped: %s", exc)
 
 
 @app.get("/api/health")

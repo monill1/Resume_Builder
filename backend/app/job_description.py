@@ -162,9 +162,11 @@ def parse_job_description(source: JobSourceContent) -> JobDescriptionAnalysis:
     ]
     tools = extract_known_terms(all_text, categories={"hard_skill"})[:14]
 
+    clean_title = _clean_job_title(source.title, source.text)
+
     return JobDescriptionAnalysis(
         source=source,
-        title=clean_phrase(source.title) or _guess_title_from_text(source.text),
+        title=clean_title,
         requirement_lines=dedupe_preserve_order([*required_lines, *preferred_lines, *responsibility_lines])[:18],
         required_skills=required_skills,
         preferred_skills=preferred_skills,
@@ -241,9 +243,86 @@ def _clean_text(text: str) -> str:
 def _guess_title_from_text(text: str) -> str:
     lines = _to_lines(text)
     for line in lines[:4]:
-        if 5 <= len(line) <= 100 and not _line_matches_any(line, ("responsib", "requirement", "qualification", "about", "team")):
+        if _looks_like_job_title(line):
             return line
+    detected = _detect_known_role_title(text)
+    if detected:
+        return detected
     return "Target Role"
+
+
+def _clean_job_title(title: str, text: str) -> str:
+    cleaned = clean_phrase(title)
+    if _looks_like_job_title(cleaned):
+        return cleaned
+    detected = _detect_known_role_title("\n".join([title, text]))
+    return detected or "Target Role"
+
+
+def _looks_like_job_title(value: str) -> bool:
+    text = clean_phrase(value)
+    if not text or len(text) > 80:
+        return False
+    words = text.split()
+    if len(words) > 9:
+        return False
+    if text.endswith((".", "!", "?")):
+        return False
+    if "," in text and len(words) > 4:
+        return False
+    if _line_matches_any(text, ("responsib", "requirement", "qualification", "about", "team", "designing", "developing", "researching", "schemes", "permanent", "full time")):
+        return False
+    return bool(re.search(
+        r"\b(senior|sr\.?|lead|principal|staff|junior|entry|backend|frontend|full[- ]?stack|software|data|machine learning|ml|ai|devops|cloud|security|cybersecurity|business|product|project|marketing|sales|finance|hr|ui|ux|mobile|qa|test|engineer|developer|scientist|analyst|manager|designer|consultant|administrator|architect|specialist|sre)\b",
+        text,
+        re.IGNORECASE,
+    ))
+
+
+def _detect_known_role_title(text: str) -> str:
+    normalized = clean_phrase(text)
+    patterns = [
+        r"\bSenior Data Scientist\b",
+        r"\bData Scientist\b",
+        r"\bMachine Learning Engineer\b",
+        r"\bML Engineer\b",
+        r"\bAI Engineer\b",
+        r"\bBackend Developer\b",
+        r"\bBackend Engineer\b",
+        r"\bFrontend Developer\b",
+        r"\bFull Stack Developer\b",
+        r"\bData Analyst\b",
+        r"\bBusiness Analyst\b",
+        r"\bDevOps Engineer\b",
+        r"\bCloud Engineer\b",
+        r"\bCybersecurity Analyst\b",
+        r"\bQA Engineer\b",
+        r"\bProduct Manager\b",
+        r"\bProject Manager\b",
+        r"\bUI UX Designer\b",
+        r"\bMobile Developer\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            return clean_phrase(match.group(0)).title().replace("Ml ", "ML ").replace("Ui Ux", "UI UX")
+    lowered = normalized.lower()
+    senior = "Senior " if re.search(r"\b(senior|sr\.?|lead|principal|staff|5\+ years|6\+ years|7\+ years|8\+ years)\b", lowered) else ""
+    if re.search(r"\b(machine learning|ml model|model evaluation|feature engineering|pytorch|tensorflow|scikit|llm|agentic ai|generative ai)\b", lowered):
+        return f"{senior}Machine Learning Engineer".strip()
+    if re.search(r"\b(data science|predictive model|statistics|forecasting|classification|regression)\b", lowered):
+        return f"{senior}Data Scientist".strip()
+    if re.search(r"\b(sql|dashboard|analytics|power bi|tableau|cohort|funnel)\b", lowered):
+        return f"{senior}Data Analyst".strip()
+    if re.search(r"\b(api|backend|fastapi|django|node|postgresql|microservice)\b", lowered):
+        return f"{senior}Backend Engineer".strip()
+    if re.search(r"\b(react|frontend|javascript|typescript|css|ui component)\b", lowered):
+        return f"{senior}Frontend Developer".strip()
+    if re.search(r"\b(devops|cloud|aws|azure|gcp|kubernetes|docker|terraform|ci/cd)\b", lowered):
+        return f"{senior}Cloud Engineer".strip()
+    if re.search(r"\b(cybersecurity|security|soc|siem|vulnerability|incident response|iam)\b", lowered):
+        return f"{senior}Cybersecurity Analyst".strip()
+    return ""
 
 
 def _to_lines(text: str) -> list[str]:

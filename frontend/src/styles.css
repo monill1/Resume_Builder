@@ -2446,7 +2446,7 @@ a {
 
 .ats-simple-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
 }
 
@@ -2899,7 +2899,10 @@ a {
 .ats-correction-lines > div,
 .ats-skill-placement,
 .ats-project-idea-columns > div,
-.ats-learning-plan {
+.ats-project-build-summary,
+.ats-project-detail-grid > div,
+.ats-learning-plan,
+.ats-project-readiness {
   display: grid;
   gap: 8px;
   padding: 14px;
@@ -2950,6 +2953,26 @@ a {
   gap: 14px;
 }
 
+.ats-project-build-summary {
+  border-color: rgba(34, 211, 238, 0.18);
+  background: rgba(8, 47, 73, 0.22);
+}
+
+.ats-project-build-summary p {
+  color: rgba(226, 246, 255, 0.9);
+  font-weight: 700;
+}
+
+.ats-project-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ats-project-detail-grid > div {
+  align-content: start;
+}
+
 .ats-project-idea-card ul {
   display: grid;
   gap: 8px;
@@ -2958,9 +2981,15 @@ a {
 }
 
 .ats-project-idea-columns strong,
-.ats-learning-plan p {
+.ats-learning-plan p,
+.ats-project-readiness p {
   color: #bbf7d0;
   font-weight: 800;
+}
+
+.ats-project-readiness {
+  border-color: rgba(251, 191, 36, 0.22);
+  background: rgba(120, 53, 15, 0.12);
 }
 
 .ats-simple-result > :nth-child(2) {
@@ -4049,7 +4078,8 @@ a {
   .ats-correction-summary,
   .ats-correction-topline,
   .ats-correction-lines,
-  .ats-project-idea-columns {
+  .ats-project-idea-columns,
+  .ats-project-detail-grid {
     grid-template-columns: 1fr;
   }
 

@@ -14,8 +14,11 @@ def build_suggestions(
     formatting_issues: list[dict[str, str]],
     stuffing_warnings: list[dict[str, str]],
     role_match: RoleMatchResult,
+    market_context: list[dict[str, object]] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     grouped = {"high_impact": [], "medium_impact": [], "low_impact": []}
+    market_suggestions = _market_context_suggestions(market_context or [])
+    grouped["medium_impact"].extend(market_suggestions)
 
     for gap in gap_analysis["critical_gaps"][:3]:
         grouped["high_impact"].append(
@@ -109,6 +112,25 @@ def build_suggestions(
     return {key: _dedupe_suggestions(value)[:6] for key, value in grouped.items()}
 
 
+def _market_context_suggestions(market_context: list[dict[str, object]]) -> list[dict[str, str]]:
+    suggestions: list[dict[str, str]] = []
+    for item in market_context[:2]:
+        title = str(item.get("title") or "Market expectation").strip()
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        suggestions.append(
+            {
+                "priority": "medium",
+                "title": f"Use current market signals: {title}",
+                "details": _shorten(text, 230),
+                "issue_type": "content",
+                "suggested_edit": "Use this only where truthful: convert the relevant market expectation into one concrete resume bullet with action, tool, scope, and outcome.",
+            }
+        )
+    return suggestions
+
+
 def flatten_suggestions(grouped: dict[str, list[dict[str, str]]]) -> list[dict[str, str]]:
     return [*grouped.get("high_impact", []), *grouped.get("medium_impact", []), *grouped.get("low_impact", [])][:10]
 
@@ -163,3 +185,10 @@ def _dedupe_suggestions(items: list[dict[str, str]]) -> list[dict[str, str]]:
         seen.add(key)
         unique.append(item)
     return unique
+
+
+def _shorten(text: str, max_length: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= max_length:
+        return cleaned
+    return f"{cleaned[: max_length - 3].rstrip()}..."

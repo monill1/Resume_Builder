@@ -3,6 +3,7 @@ from __future__ import annotations
 from .ats_scoring import score_resume
 from .job_description import JobSourceContent, build_job_source, parse_job_description
 from .models import ATSAnalysisResponse, ResumePayload
+from .rag_service import build_rag_query, retrieve_market_context
 from .resume_parser import parse_resume
 
 
@@ -13,7 +14,14 @@ def prepare_job_source(*, job_url: str | None, job_description: str | None, targ
 def analyze_resume_against_job(resume: ResumePayload, job_source: JobSourceContent) -> ATSAnalysisResponse:
     job_analysis = parse_job_description(job_source)
     resume_analysis = parse_resume(resume)
-    scoring_payload = score_resume(job_analysis, resume_analysis)
+    rag_query = build_rag_query(
+        target_title=job_analysis.title,
+        job_description=job_source.text,
+        resume_summary=resume_analysis.section_text.get("summary", ""),
+        skills=[term for terms in resume_analysis.keyword_inventory.values() for term in terms],
+    )
+    market_context = retrieve_market_context(rag_query, top_k=8)
+    scoring_payload = score_resume(job_analysis, resume_analysis, market_context=market_context)
     return ATSAnalysisResponse(
         job_url=job_source.job_url,
         job_title=job_analysis.title,

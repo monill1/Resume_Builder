@@ -434,6 +434,15 @@ async function readErrorMessage(response, fallbackMessage) {
   }
 }
 
+function backendReachabilityMessage(error) {
+  const rawMessage = error?.message || "";
+  if (rawMessage && rawMessage !== "Failed to fetch") {
+    return rawMessage;
+  }
+  const target = API_BASE_URL || "the local /api proxy";
+  return `Could not reach the backend through ${target}. Make sure the FastAPI server is running on port 8007 and restart the Vite dev server after config changes.`;
+}
+
 function App() {
   const [resume, setResume] = useState(() => normalizeResumeData(structuredClone(sampleResume)));
   const [selectedTemplate, setSelectedTemplate] = useState(() => getTemplateMeta(window.localStorage.getItem(RESUME_TEMPLATE_KEY)).id);
@@ -836,7 +845,7 @@ function App() {
       const data = await response.json();
       completeAuthSession(data);
     } catch (error) {
-      setAuthStatus(error.message);
+      setAuthStatus(backendReachabilityMessage(error));
     } finally {
       setAuthLoading(false);
     }
@@ -2971,8 +2980,10 @@ function ATSSimpleResultPanel({ result, optimization, currentResume, onAutoFix, 
   const analyzedResume = resultSource === "pdf" && result.analyzed_resume ? normalizeResumeData(result.analyzed_resume) : currentResume;
   const metrics = [
     { label: "Job Match", value: normalizeScore(result.job_match_score ?? result.overall_score), tone: "blue" },
-    { label: "Keyword Match", value: normalizeScore(result.section_scores?.keyword_coverage ?? result.section_scores?.skills_match), tone: "green" },
+    { label: "Role Fit", value: normalizeScore(result.score_breakdown?.job_match?.role_context_fit ?? result.score_breakdown?.job_match?.role_alignment), tone: "green" },
+    { label: "Requirement Evidence", value: normalizeScore(result.score_breakdown?.job_match?.semantic_requirement_match ?? result.semantic_coverage), tone: "blue" },
     { label: "Experience Match", value: normalizeScore(result.section_scores?.experience_relevance ?? result.responsibility_match_score), tone: "yellow" },
+    { label: "Keyword Coverage", value: normalizeScore(result.section_scores?.keyword_coverage ?? result.section_scores?.skills_match), tone: "green" },
   ];
   const allFixes = buildSimpleFixes(result, optimization);
   const fixes = allFixes.slice(0, 5);
@@ -3163,6 +3174,12 @@ function ProjectIdeaCard({ project }) {
         <span>Add in Projects</span>
       </div>
       <p>{project.why}</p>
+      {project.buildSummary ? (
+        <div className="ats-project-build-summary">
+          <span>What to build</span>
+          <p>{project.buildSummary}</p>
+        </div>
+      ) : null}
       <div className="ats-project-idea-columns">
         <div>
           <span>Project section entry</span>
@@ -3178,10 +3195,54 @@ function ProjectIdeaCard({ project }) {
           </ul>
         </div>
       </div>
+      <div className="ats-project-detail-grid">
+        {project.coreFeatures?.length ? (
+          <div>
+            <span>Core build features</span>
+            <ul>
+              {project.coreFeatures.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {project.technologyPlan?.length ? (
+          <div>
+            <span>Technology map</span>
+            <ul>
+              {project.technologyPlan.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {project.evaluationPlan?.length ? (
+          <div>
+            <span>How to evaluate it</span>
+            <ul>
+              {project.evaluationPlan.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {project.proofArtifacts?.length ? (
+          <div>
+            <span>Proof to collect</span>
+            <p>{project.proofArtifacts.join(", ")}</p>
+          </div>
+        ) : null}
+      </div>
       {project.learnBeforeSubmit.length ? (
         <div className="ats-learning-plan">
           <span>Learn before submitting</span>
           <p>{project.learnBeforeSubmit.join(", ")}</p>
+        </div>
+      ) : null}
+      {project.readinessRule ? (
+        <div className="ats-project-readiness">
+          <span>When to add it</span>
+          <p>{project.readinessRule}</p>
         </div>
       ) : null}
     </article>
@@ -3216,25 +3277,42 @@ function buildAtsCorrectionPlan(result, resume, overallScore) {
   ]).filter(isSkillLikeTerm);
 
   const resumeLines = collectResumeEvidenceLines(resume);
+  const usedSuggestionFingerprints = new Set();
+  const usedEvidenceKeys = new Set();
   const items = skills.slice(0, 5).map((skill, index) => {
-    const oldLine = findBestOldLineForSkill(skill, resumeLines, index);
+    const oldLine = findBestOldLineForSkill(skill, resumeLines, index, result, resume, usedEvidenceKeys);
     const context = detectResumeBulletContext(skill, result, resume);
-    const shouldPreferProject = shouldSuggestProjectEvidence(skill, context, result, resume);
+    const shouldPreferProject = oldLine.synthetic && shouldSuggestProjectEvidence(skill, context, result, resume);
     const section = shouldPreferProject || oldLine.section === "projects" ? "Projects" : "Experience";
-    const action = oldLine.synthetic || shouldPreferProject ? `Add to ${section}` : `Rewrite in ${section}`;
+    const action = oldLine.synthetic || shouldPreferProject ? `Add to ${section}` : oldLine.weakEvidence ? `Improve ${section}` : `Rewrite in ${section}`;
+    const targetPlacement = oldLine.synthetic ? findBestAddTarget(skill, section, result, resume, context) : null;
     const placement = findSkillPlacement(resume, skill);
-    const newLine = buildModelResumeLine(skill, result, oldLine, section, resume);
+    const newLine = ensureUniqueCoachSuggestion(
+      buildModelResumeLine(skill, result, oldLine, section, resume, index, targetPlacement),
+      skill,
+      result,
+      resume,
+      context,
+      section,
+      usedSuggestionFingerprints,
+      index,
+      targetPlacement,
+    );
     const impact = estimateSkillImpact(skill, result, index);
 
     return {
       id: `${skill.toLowerCase()}-${index}`,
       skill,
-      oldLine: oldLine.text,
+      oldLine: oldLine.synthetic ? targetPlacement.oldLineText : oldLine.text,
       newLine,
       action,
       impact,
-      skillPlacement: buildSkillPlacementText(skill, placement),
-      guidance: buildSkillGuidance(skill, result.job_title, section, placement),
+      skillPlacement: oldLine.synthetic
+        ? buildDeferredSkillPlacementText(skill, placement, targetPlacement)
+        : buildSkillPlacementText(skill, placement),
+      guidance: oldLine.synthetic
+        ? buildMissingEvidenceGuidance(skill, result.job_title, placement, targetPlacement)
+        : buildSkillGuidance(skill, result.job_title, section, placement),
       placement,
     };
   });
@@ -3276,6 +3354,96 @@ function collectResumeEvidenceLines(resume) {
   return lines;
 }
 
+function findBestAddTarget(skill, section, result, resume, context) {
+  const targetSection = section === "Projects" ? "Projects" : "Experience";
+  const allCandidates = collectProjectTargets(resume).concat(collectExperienceTargets(resume));
+  const scored = allCandidates.map((candidate, index) => ({
+    ...candidate,
+    score: scoreAddTarget(candidate, skill, result, resume, context) + (candidate.section === targetSection ? 1 : 0),
+    index,
+  })).sort((left, right) => right.score - left.score || left.index - right.index);
+
+  const selected = scored.find((candidate) => candidate.score >= minimumAddTargetScore(skill, context));
+  if (!selected) {
+    return {
+      section: targetSection,
+      label: "",
+      name: "",
+      oldLineText: `No existing Experience or Projects entry strongly matches ${skill}. Add this only after you build or document relevant proof.`,
+    };
+  }
+  return {
+    ...selected,
+    oldLineText: `Add this as a new bullet under ${selected.label}; no strong existing line matched ${skill}.`,
+  };
+}
+
+function collectProjectTargets(resume) {
+  return (resume?.projects ?? []).map((project, index) => ({
+    section: "Projects",
+    name: cleanDisplayText(project.name || `Project ${index + 1}`),
+    label: `Projects: ${cleanDisplayText(project.name || `Project ${index + 1}`)}`,
+    tech: cleanDisplayText(project.tech_stack),
+    text: cleanDisplayText([project.name, project.tech_stack, ...(project.highlights ?? [])].join(" ")),
+  })).filter((item) => item.text);
+}
+
+function collectExperienceTargets(resume) {
+  return (resume?.experience ?? []).map((job, index) => {
+    const role = cleanDisplayText(job.role || `Experience ${index + 1}`);
+    const company = cleanDisplayText(job.company);
+    return {
+      section: "Experience",
+      name: role,
+      label: `Experience: ${role}${company ? ` at ${company}` : ""}`,
+      tech: "",
+      text: cleanDisplayText([job.role, job.company, job.description, ...(job.achievements ?? [])].join(" ")),
+    };
+  }).filter((item) => item.text);
+}
+
+function scoreAddTarget(candidate, skill, result, resume, context) {
+  const text = cleanDisplayText(candidate.text).toLowerCase();
+  const normalizedSkill = cleanDisplayText(skill).toLowerCase();
+  const terms = uniqueDisplayItems([
+    ...skillEvidenceTokens(skill),
+    ...meaningfulCoachTerms(contextualSkillFamilyText(context, skill)),
+    ...meaningfulCoachTerms(result?.job_title),
+    ...meaningfulCoachTerms(resume?.basics?.headline),
+  ]).slice(0, 30);
+  let score = terms.reduce((sum, term) => sum + (text.includes(term.toLowerCase()) ? 1 : 0), 0);
+  if (normalizedSkill && text.includes(normalizedSkill)) score += 8;
+  if (hasStrongContextMatch(candidate, skill, result, resume)) score += 3;
+  score += specificDomainEvidenceScore(text, context, skill);
+  if (candidate.section === "Projects" && ["ai", "data", "cloud", "security", "mobile", "frontend", "backend"].includes(context)) score += 1;
+  if (candidate.section === "Experience" && ["product", "sales", "finance", "hr", "marketing", "it", "network", "sap"].includes(context)) score += 1;
+  return score;
+}
+
+function minimumAddTargetScore(skill, context) {
+  const normalized = cleanDisplayText(skill).toLowerCase();
+  if (/(aws|azure|gcp|kubernetes|docker|terraform|ci\/cd|jenkins|github actions)/i.test(normalized)) return 7;
+  if (["cloud", "security", "sap", "network", "database"].includes(context)) return 6;
+  return 5;
+}
+
+function specificDomainEvidenceScore(text, context, skill) {
+  const normalizedSkill = cleanDisplayText(skill).toLowerCase();
+  let score = 0;
+
+  if (context === "cloud") {
+    if (/\b(aws|azure|gcp|cloud|terraform|iam|vpc|compute|storage)\b/i.test(text)) score += 4;
+    if (/\b(docker|kubernetes|container|ci\/cd|github actions|jenkins|deployment|release|rollback|monitoring)\b/i.test(text)) score += 3;
+    if (/\b(model|scikit|pandas|numpy|recommendation|classification|prediction)\b/i.test(text) && !/\b(deploy|deployment|cloud|docker|kubernetes|gcp|aws|azure)\b/i.test(text)) score -= 3;
+  }
+  if (context === "ai" && /\b(model|ml|machine learning|scikit|tensorflow|pytorch|nlp|rag|llm|evaluation)\b/i.test(text)) score += 3;
+  if (context === "data" && /\b(sql|dashboard|analytics|kpi|etl|pandas|tableau|power bi|reporting)\b/i.test(text)) score += 3;
+  if (context === "frontend" && /\b(react|javascript|typescript|component|ui|css|accessibility)\b/i.test(text)) score += 3;
+  if (context === "backend" && /\b(api|backend|fastapi|node|django|database|postgres|endpoint)\b/i.test(text)) score += 3;
+  if (normalizedSkill && text.includes(normalizedSkill)) score += 2;
+  return score;
+}
+
 function isUsefulResumeEvidenceLine(text) {
   const cleaned = cleanDisplayText(text);
   if (cleaned.length < 38) return false;
@@ -3298,16 +3466,504 @@ function shouldSuggestProjectEvidence(skill, context, result, resume) {
 }
 
 function buildSuggestedProjectIdeas(result, resume, skills) {
-  const role = sanitizeRoleLabel(result?.job_title);
+  const role = professionalRoleLabel(result, resume);
   const context = detectResumeBulletContext(skills.join(" "), result, resume);
   const missing = uniqueDisplayItems(skills).filter(isSkillLikeTerm).slice(0, 10);
   const resumeSummary = cleanDisplayText([resume?.basics?.headline, resume?.basics?.summary].join(" "));
+  const roleProjects = buildRealWorldProjectIdeas(result, resume, missing, context, role);
+  const ragProjects = buildRagProjectIdeas(result, resume, missing, context, role);
   const projectFocuses = buildTailoredProjectFocuses(context, role, missing, result, resumeSummary);
   const tailoredProjects = projectFocuses.map((focus, index) => buildCoachProjectIdea(focus, role, context, missing, result, resume, index));
   const fallbackProject = projectTemplateForContext(context, role, missing[0] || "role-specific skills", missing[1] || role, missing);
-  return [...tailoredProjects, fallbackProject]
+  return [...roleProjects, ...ragProjects, ...tailoredProjects, fallbackProject]
     .filter(Boolean)
-    .filter((item, index, list) => list.findIndex((candidate) => candidate.projectName === item.projectName) === index);
+    .filter((item, index, list) => list.findIndex((candidate) => candidate.projectName === item.projectName) === index)
+    .map((project, index) => enrichProjectIdea(project, context, role, missing, result, resume, index));
+}
+
+function buildRealWorldProjectIdeas(result, resume, missingSkills, context, role) {
+  const profileText = cleanDisplayText([
+    role,
+    result?.job_title,
+    result?.detected_role_family,
+    result?.detected_resume_role_family,
+    resume?.basics?.headline,
+    resume?.basics?.summary,
+    ...(resume?.skills ?? []).map((group) => `${group.name} ${(group.items ?? []).join(" ")}`),
+    ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result?.missing_keywords ?? []).map((item) => item.keyword),
+    ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
+  ].join(" ")).toLowerCase();
+  const archetypes = realWorldProjectArchetypesForRole(profileText, context, role);
+  return archetypes.slice(0, 3).map((project, index) => {
+    const stack = uniqueDisplayItems([...project.stack, ...missingSkills.slice(index, index + 3)]).slice(0, 8);
+    return {
+      id: `real-world-${project.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      title: `Real-world ${project.domain} project: ${project.projectName}`,
+      projectName: project.projectName,
+      stack: stack.join(", "),
+      why: project.why,
+      bullets: project.bullets,
+      learnBeforeSubmit: uniqueDisplayItems([...project.learnBeforeSubmit, ...missingSkills.slice(0, 3)]).slice(0, 8),
+      impact: Math.max(7, 10 - index),
+      realWorldDomain: project.domain,
+    };
+  });
+}
+
+function realWorldProjectArchetypesForRole(profileText, context, role) {
+  if (/\b(data scientist|machine learning|ml engineer|ai engineer|nlp|predictive|model|scikit|tensorflow|pytorch)\b/i.test(profileText)) {
+    return [
+      {
+        domain: "data science",
+        projectName: "Customer Churn Prediction and Retention Insights",
+        stack: ["Python", "SQL", "Pandas", "Scikit-learn", "feature engineering", "model evaluation", "SHAP"],
+        why: `This is a professional ${role} portfolio project because it mirrors a common business problem: predicting churn, explaining drivers, and recommending retention actions.`,
+        bullets: [
+          "Built a churn prediction pipeline with SQL/Python feature engineering, baseline comparison, and precision/recall evaluation.",
+          "Explained churn drivers with feature importance and translated model output into retention recommendations for business stakeholders.",
+        ],
+        learnBeforeSubmit: ["classification metrics", "feature engineering", "model explainability"],
+      },
+      {
+        domain: "data science",
+        projectName: "Demand Forecasting and Inventory Risk Dashboard",
+        stack: ["Python", "Pandas", "time-series forecasting", "Power BI", "error analysis", "business recommendations"],
+        why: "Forecasting projects look practical to recruiters because they connect historical data, model quality, inventory risk, and decisions a business can act on.",
+        bullets: [
+          "Created a demand forecasting workflow using historical sales data, seasonality features, and forecast-error tracking.",
+          "Built an inventory risk dashboard highlighting stockout risk, reorder signals, and recommendations for operations teams.",
+        ],
+        learnBeforeSubmit: ["time-series validation", "forecast error", "dashboard storytelling"],
+      },
+      {
+        domain: "AI/ML",
+        projectName: "RAG Policy Knowledge Assistant",
+        stack: ["Python", "FastAPI", "RAG", "embeddings", "vector database", "citations", "LLM evaluation"],
+        why: "A RAG assistant is a current real-world AI project when it includes retrieval quality checks, citations, fallback behavior, and hallucination review.",
+        bullets: [
+          "Built a RAG assistant that retrieves policy/document passages, generates cited answers, and handles low-confidence queries with fallback responses.",
+          "Evaluated retrieval quality with test questions, relevance labels, citation checks, and hallucination-risk notes.",
+        ],
+        learnBeforeSubmit: ["embeddings", "chunking", "retrieval evaluation"],
+      },
+    ];
+  }
+
+  if (/\b(data analyst|business analyst|bi analyst|analytics|dashboard|power bi|tableau|sql)\b/i.test(profileText) || context === "data") {
+    return [
+      {
+        domain: "analytics",
+        projectName: "Revenue KPI and Cohort Analytics Dashboard",
+        stack: ["SQL", "Power BI", "Excel", "cohort analysis", "KPI definitions", "stakeholder reporting"],
+        why: "This resembles real analyst work: define metrics, clean data, explain trends, and recommend business actions.",
+        bullets: [
+          "Built a KPI dashboard tracking revenue, retention, cohorts, and conversion trends from cleaned SQL datasets.",
+          "Documented metric definitions, data-quality checks, and action recommendations for stakeholder review.",
+        ],
+        learnBeforeSubmit: ["SQL joins", "KPI design", "Power BI storytelling"],
+      },
+      {
+        domain: "analytics",
+        projectName: "E-commerce Funnel Drop-off Analysis",
+        stack: ["SQL", "Python", "funnel analysis", "A/B testing", "Tableau", "conversion metrics"],
+        why: "Funnel analysis is a practical project for product, marketing, and BI roles because it turns behavior data into conversion decisions.",
+        bullets: [
+          "Analyzed browse-to-checkout funnel drop-offs using SQL cohorts and conversion-rate metrics.",
+          "Recommended A/B test hypotheses and UX fixes tied to measurable conversion improvement.",
+        ],
+        learnBeforeSubmit: ["funnel analysis", "cohort metrics", "A/B testing basics"],
+      },
+    ];
+  }
+
+  if (/\b(backend|software engineer|full stack|api|fastapi|node|django|spring|microservice)\b/i.test(profileText) || ["backend", "frontend"].includes(context)) {
+    return [
+      {
+        domain: "software engineering",
+        projectName: "Role-Based SaaS Admin Portal",
+        stack: ["React", "FastAPI", "PostgreSQL", "authentication", "RBAC", "REST APIs", "audit logs"],
+        why: "This is a strong real-world engineering project because it shows product workflow, API design, database persistence, access control, and operational evidence.",
+        bullets: [
+          "Built a role-based admin portal with authentication, CRUD workflows, PostgreSQL persistence, and protected API routes.",
+          "Added validation, audit logs, error states, and API tests to improve reliability and reviewer trust.",
+        ],
+        learnBeforeSubmit: ["API contracts", "RBAC", "database schema design"],
+      },
+      {
+        domain: "software engineering",
+        projectName: "Customer Support Ticketing and SLA Tracker",
+        stack: ["React", "Node.js", "SQL", "SLA tracking", "notifications", "dashboarding"],
+        why: "Ticketing systems are recognizable business software and let candidates show workflow ownership, data modeling, and reporting.",
+        bullets: [
+          "Built a support ticketing workflow with intake, assignment, SLA timers, status updates, and escalation rules.",
+          "Created dashboard views for ticket volume, resolution time, overdue items, and recurring issue categories.",
+        ],
+        learnBeforeSubmit: ["workflow modeling", "SQL reporting", "error handling"],
+      },
+    ];
+  }
+
+  if (/\b(devops|cloud|sre|aws|azure|gcp|docker|kubernetes|terraform|ci\/cd)\b/i.test(profileText) || context === "cloud") {
+    return [
+      {
+        domain: "cloud",
+        projectName: "Cloud Cost and Reliability Dashboard",
+        stack: ["AWS or GCP", "Docker", "Terraform", "GitHub Actions", "Prometheus", "Grafana", "runbooks"],
+        why: "This mirrors practical cloud/SRE work by showing deployment health, cost awareness, alerts, and operational readiness.",
+        bullets: [
+          "Built a cloud reliability dashboard tracking deployment status, service health, alert rules, and cost indicators.",
+          "Documented infrastructure setup, rollback notes, runbook steps, and validation evidence for production readiness.",
+        ],
+        learnBeforeSubmit: ["cloud IAM basics", "CI/CD", "monitoring"],
+      },
+      {
+        domain: "cloud",
+        projectName: "Containerized CI/CD Release Pipeline",
+        stack: ["Docker", "GitHub Actions", "Kubernetes", "environment variables", "tests", "rollback"],
+        why: "A release pipeline project proves you can ship software reliably, not only list cloud keywords.",
+        bullets: [
+          "Automated test, build, containerization, and deployment steps for a sample backend service.",
+          "Added environment configuration, release logs, health checks, and rollback documentation.",
+        ],
+        learnBeforeSubmit: ["Dockerfiles", "pipeline validation", "rollback planning"],
+      },
+    ];
+  }
+
+  if (/\b(cyber|security|soc|siem|vulnerability|iam|risk|owasp)\b/i.test(profileText) || context === "security") {
+    return [
+      {
+        domain: "cybersecurity",
+        projectName: "SOC Alert Triage and Incident Report Simulator",
+        stack: ["SIEM logs", "Splunk or Sentinel", "incident response", "severity scoring", "reporting"],
+        why: "This looks professional for security roles because it shows evidence handling, severity judgment, escalation, and reporting.",
+        bullets: [
+          "Built a SOC alert triage simulator that classifies suspicious events, captures evidence, and recommends escalation paths.",
+          "Generated incident reports with timeline, impacted asset, severity, root cause, and containment recommendations.",
+        ],
+        learnBeforeSubmit: ["SIEM basics", "incident timeline", "severity scoring"],
+      },
+      {
+        domain: "cybersecurity",
+        projectName: "OWASP API Vulnerability Tracker",
+        stack: ["OWASP Top 10", "API security", "risk severity", "remediation tracking", "audit logs"],
+        why: "A vulnerability tracker demonstrates security thinking plus practical documentation and remediation ownership.",
+        bullets: [
+          "Created an API vulnerability tracker with severity classification, reproduction notes, owners, and remediation status.",
+          "Added audit evidence, risk summaries, and validation checks for security review.",
+        ],
+        learnBeforeSubmit: ["OWASP Top 10", "risk rating", "remediation evidence"],
+      },
+    ];
+  }
+
+  return [
+    {
+      domain: context || "professional",
+      projectName: `${role} Operations Case Study`,
+      stack: ["workflow design", "documentation", "metrics", "validation", "stakeholder reporting"],
+      why: "This gives recruiters a concrete case study with problem, approach, tools, evidence, and outcome instead of a generic keyword project.",
+      bullets: [
+        `Built a ${role} case study documenting the problem, workflow, tools used, validation evidence, and measurable outcome.`,
+        "Created a recruiter-ready README with screenshots, decisions, limitations, and next improvements.",
+      ],
+      learnBeforeSubmit: ["case study writing", "metrics", "documentation"],
+    },
+  ];
+}
+
+function enrichProjectIdea(project, context, role, missingSkills, result, resume, index = 0) {
+  const projectName = cleanDisplayText(project.projectName || project.title || `${role} proof project`);
+  const stack = parseProjectStack(project.stack, missingSkills);
+  const jdSignals = uniqueDisplayItems([
+    ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result?.missing_keywords ?? []).map((item) => item.keyword),
+    ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
+  ].map(cleanProjectSignal)).filter(Boolean).slice(0, 6);
+  const resumeAnchor = cleanDisplayText(resume?.basics?.headline || resume?.experience?.[0]?.role || resume?.projects?.[0]?.name || role);
+  const blueprint = projectBlueprintForContext(context, projectName, role, stack, jdSignals, resumeAnchor);
+  const resumeBullets = strengthenProjectResumeBullets(project, blueprint, context, role, stack);
+
+  return {
+    ...project,
+    projectName,
+    stack: stack.join(", "),
+    title: project.title || `Build role-specific proof: ${projectName}`,
+    why: project.why || blueprint.why,
+    buildSummary: blueprint.buildSummary,
+    coreFeatures: blueprint.coreFeatures,
+    technologyPlan: blueprint.technologyPlan,
+    evaluationPlan: blueprint.evaluationPlan,
+    proofArtifacts: blueprint.proofArtifacts,
+    readinessRule: blueprint.readinessRule,
+    bullets: resumeBullets,
+    learnBeforeSubmit: uniqueDisplayItems([...(project.learnBeforeSubmit ?? []), ...blueprint.learnBeforeSubmit]).slice(0, 8),
+    impact: project.impact || Math.max(6, 9 - index),
+  };
+}
+
+function parseProjectStack(stack, missingSkills) {
+  return uniqueDisplayItems([
+    ...String(stack || "").split(",").map(cleanDisplayText),
+    ...missingSkills.slice(0, 3),
+  ].map(cleanProjectSignal).filter(Boolean)).slice(0, 10);
+}
+
+function cleanProjectSignal(value) {
+  const text = cleanDisplayText(value)
+    .replace(/^[-•*]\s*/, "")
+    .replace(/\s*\([^)]{40,}\)\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length > 64) return "";
+  if (/[.!?]$/.test(text)) return "";
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return "";
+  if (/^(designing|developing|researching|building|creating|working|partnering|managing|owning|responsible|should|must|will)\b/i.test(text)) return "";
+  if (/\b(requirements?|responsibilit|qualification|permanent|full.?time|part.?time|salary|location|years?)\b/i.test(text)) return "";
+  if (isSkillLikeTerm(text)) return text;
+  if (/\b(churn|forecasting|recommendation|ranking|classification|regression|retrieval|dashboard|pipeline|deployment|monitoring|ticketing|triage|cohort|funnel|retention|inventory|fraud|risk|sentiment|pricing|segmentation)\b/i.test(text)) return text;
+  return "";
+}
+
+function projectBlueprintForContext(context, projectName, role, stack, jdSignals, resumeAnchor) {
+  const primary = stack[0] || jdSignals[0] || "role-specific skills";
+  const secondary = stack[1] || jdSignals[1] || "validation";
+  const signalText = jdSignals.length ? jdSignals.slice(0, 4).join(", ") : primary;
+  const base = {
+    why: `This turns ${resumeAnchor} into concrete proof for ${role} by showing the problem, build, tools, validation, and recruiter-readable outcome.`,
+    buildSummary: `Build a small but working ${projectName} that solves one realistic ${role} workflow and proves ${signalText} with visible outputs.`,
+    coreFeatures: [
+      `Define the user problem, input data, expected output, and success metric before writing the resume bullet.`,
+      `Build the main workflow end to end instead of only creating a static demo.`,
+      `Add error handling, sample data, screenshots, and clear setup instructions.`,
+      `Write a short README explaining tradeoffs, limitations, and what you would improve next.`,
+    ],
+    technologyPlan: [
+      `Use ${primary} for the core implementation and ${secondary} for validation or delivery support.`,
+      `Keep the stack small enough that you can explain every tool in an interview.`,
+      `Document where each technology is used so the resume bullet does not look keyword-stuffed.`,
+    ],
+    evaluationPlan: [
+      "Create 5-10 test cases or sample scenarios that prove the project works.",
+      "Capture before/after results, screenshots, logs, or metric output.",
+      "Check edge cases and document failures honestly.",
+    ],
+    proofArtifacts: ["GitHub README", "screenshots or demo video", "sample input/output", "validation notes"],
+    readinessRule: "Add this to Projects only after you can run it, explain the design choices, and show evidence that it works.",
+    learnBeforeSubmit: [],
+  };
+
+  if (context === "ai") {
+    return {
+      ...base,
+      buildSummary: `Build ${projectName} as a working AI/ML workflow: ingest data, prepare features or context, run the model/retrieval logic, evaluate output quality, and explain the result.`,
+      coreFeatures: [
+        "Data ingestion with a small clean sample dataset or document set.",
+        "Preprocessing, chunking, feature engineering, or prompt/retrieval setup depending on the project.",
+        "Model, RAG, or agent workflow that returns a visible answer, prediction, ranking, or recommendation.",
+        "Evaluation view showing metrics, failed cases, hallucination checks, or error analysis.",
+      ],
+      technologyPlan: [
+        `Use ${primary} for the main AI/ML workflow.`,
+        "Use Python notebooks or FastAPI/Streamlit for a reviewer-friendly demo.",
+        "Use MLflow, metric tables, cited answers, or logs to prove the output was evaluated.",
+      ],
+      evaluationPlan: [
+        "Compare at least one baseline against the improved version.",
+        "Track precision, recall, F1, relevance, groundedness, or task success depending on the project.",
+        "Save 5 strong examples and 3 failure cases with notes on why the model behaved that way.",
+      ],
+      proofArtifacts: ["README architecture diagram", "sample dataset", "metrics table", "failure-case notes", "screenshots"],
+      learnBeforeSubmit: ["model evaluation", "error analysis", "README documentation"],
+    };
+  }
+
+  if (context === "cloud") {
+    return {
+      ...base,
+      buildSummary: `Build ${projectName} by deploying a small service, automating release steps, and proving it can be configured, validated, monitored, and rolled back.`,
+      coreFeatures: [
+        "A deployable sample API or app with environment variables and health checks.",
+        "Dockerfile or deployment configuration with clear setup steps.",
+        "CI/CD workflow that runs validation before deployment.",
+        "Monitoring, release log, rollback notes, and cost/access assumptions.",
+      ],
+      technologyPlan: [
+        `Use ${primary} for the cloud or platform layer.`,
+        "Use Docker and GitHub Actions for repeatable build and release evidence.",
+        "Use logs, health checks, or simple monitoring output to prove operational readiness.",
+      ],
+      evaluationPlan: [
+        "Run build validation and record the pass/fail output.",
+        "Deploy once, capture endpoint or service health evidence, then document rollback steps.",
+        "Check secrets, IAM/access notes, and environment configuration assumptions.",
+      ],
+      proofArtifacts: ["deployment README", "pipeline screenshot", "release log", "rollback checklist"],
+      learnBeforeSubmit: ["deployment validation", "CI/CD basics", "monitoring basics"],
+    };
+  }
+
+  if (context === "data") {
+    return {
+      ...base,
+      buildSummary: `Build ${projectName} as an analytics workflow: collect data, clean it, define KPIs, create analysis or dashboard output, and turn findings into recommendations.`,
+      coreFeatures: [
+        "Raw dataset plus documented cleaning rules.",
+        "SQL/Python transformations with repeatable data-quality checks.",
+        "Dashboard, notebook, or report with KPI definitions.",
+        "Business recommendations tied to the final numbers.",
+      ],
+      technologyPlan: [
+        `Use ${primary} for analysis or transformation.`,
+        "Use SQL/Pandas for cleaning and Power BI/Tableau/Streamlit for presentation if relevant.",
+        "Keep metric definitions visible so recruiters understand the business logic.",
+      ],
+      evaluationPlan: [
+        "Validate row counts, missing values, duplicates, and KPI formulas.",
+        "Explain at least 3 insights and the decision each insight supports.",
+        "Include one limitation or data-quality risk.",
+      ],
+      proofArtifacts: ["dashboard screenshot", "cleaning notebook", "KPI dictionary", "insight summary"],
+      learnBeforeSubmit: ["KPI design", "data-quality checks", "dashboard storytelling"],
+    };
+  }
+
+  if (context === "backend" || context === "frontend") {
+    return {
+      ...base,
+      buildSummary: `Build ${projectName} as a usable product workflow with UI/API behavior, validation states, persistence or integration, and tests.`,
+      coreFeatures: [
+        "One clear user workflow from input to saved or returned result.",
+        "Validation, loading, empty, and error states.",
+        "API contract or component structure that is easy to explain.",
+        "Basic tests plus screenshots or demo notes.",
+      ],
+      technologyPlan: [
+        `Use ${primary} in the core app layer.`,
+        "Use API docs, schema examples, or component notes to explain the implementation.",
+        "Keep the feature small but complete enough to show shipped-work judgment.",
+      ],
+      evaluationPlan: [
+        "Test happy path, validation failures, and one edge case.",
+        "Record API response examples or UI screenshots.",
+        "Document performance, accessibility, or reliability tradeoffs where relevant.",
+      ],
+      proofArtifacts: ["demo screenshots", "API examples", "test notes", "README setup"],
+      learnBeforeSubmit: ["test cases", "error handling", "README documentation"],
+    };
+  }
+
+  return base;
+}
+
+function strengthenProjectResumeBullets(project, blueprint, context, role, stack) {
+  const existing = (project.bullets ?? []).map(cleanDisplayText).filter(isProfessionalProjectBullet);
+  if (existing.length >= 3) return existing.slice(0, 4);
+  const primary = stack[0] || "role-specific tools";
+  const secondary = stack[1] || "validation checks";
+  const generated = [
+    `Built ${project.projectName} using ${primary} and ${secondary} to solve a realistic ${role} workflow with measurable validation evidence.`,
+    `Implemented ${blueprint.coreFeatures[0].replace(/[.!?]*$/, "").toLowerCase()}, then documented setup, screenshots, and tradeoffs for recruiter review.`,
+    `Evaluated the project with ${blueprint.evaluationPlan[0].replace(/[.!?]*$/, "").toLowerCase()} and summarized limitations, failures, and next improvements.`,
+  ];
+  return uniqueDisplayItems([...existing, ...generated]).slice(0, 4);
+}
+
+function isProfessionalProjectBullet(value) {
+  const text = cleanDisplayText(value);
+  if (!text || text.length < 35 || text.length > 240) return false;
+  if (/\bDesigning, developing, and researching\b/i.test(text)) return false;
+  if (/\bPermanent\/?\s*Full time\b/i.test(text)) return false;
+  if (/\bworkflow tied to\s+(Design|Develop|Research|Requirement|Responsibilit)/i.test(text)) return false;
+  return /\b(built|created|developed|designed|implemented|automated|analyzed|deployed|evaluated|documented|optimized|trained|integrated)\b/i.test(text);
+}
+
+function buildRagProjectIdeas(result, resume, missingSkills, context, role) {
+  const contextItems = result?.market_context ?? [];
+  const projectEntries = contextItems.flatMap((item) => parseRagProjectEntries(item?.text || ""));
+  if (!projectEntries.length) return [];
+
+  const query = cleanDisplayText([
+    role,
+    context,
+    result?.job_title,
+    ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
+    ...(result?.missing_keywords ?? []).map((item) => item.keyword),
+    ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.text),
+    resume?.basics?.headline,
+    resume?.basics?.summary,
+  ].join(" ")).toLowerCase();
+  const queryTerms = tokenSet(query);
+
+  return projectEntries
+    .map((entry, index) => ({ entry, score: scoreRagProject(entry, queryTerms, missingSkills, context), index }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 3)
+    .map(({ entry }, index) => ragEntryToProjectIdea(entry, role, missingSkills, index));
+}
+
+function parseRagProjectEntries(text) {
+  const entries = [];
+  const pattern = /Project:\s*([^|]+)\|\s*Roles:\s*([^|]+)\|\s*Skills:\s*([^|]+)\|\s*Build:\s*([^|]+)\|\s*Bullets:\s*([^]+?)(?=\s+Project:\s|$)/gi;
+  for (const match of text.matchAll(pattern)) {
+    entries.push({
+      name: cleanDisplayText(match[1]),
+      roles: parseCommaLikeList(match[2]),
+      skills: parseCommaLikeList(match[3]),
+      build: cleanDisplayText(match[4]),
+      bullets: cleanDisplayText(match[5]).split(";").map(cleanDisplayText).filter(Boolean),
+    });
+  }
+  return entries;
+}
+
+function parseCommaLikeList(value) {
+  return String(value || "")
+    .split(",")
+    .map(cleanDisplayText)
+    .filter(Boolean);
+}
+
+function scoreRagProject(entry, queryTerms, missingSkills, context) {
+  const entryText = cleanDisplayText([entry.name, entry.roles.join(" "), entry.skills.join(" "), entry.build].join(" ")).toLowerCase();
+  const entryTerms = tokenSet(entryText);
+  let score = 0;
+  queryTerms.forEach((term) => {
+    if (entryTerms.has(term)) score += 1;
+  });
+  missingSkills.forEach((skill) => {
+    const normalizedSkill = cleanDisplayText(skill).toLowerCase();
+    if (normalizedSkill && entryText.includes(normalizedSkill)) score += 4;
+  });
+  if (context && entryText.includes(context)) score += 2;
+  return score;
+}
+
+function ragEntryToProjectIdea(entry, role, missingSkills, index) {
+  const skills = uniqueDisplayItems([...entry.skills, ...missingSkills.slice(0, 3)]).slice(0, 8);
+  const bullets = entry.bullets.length
+    ? entry.bullets
+    : [
+        `Built ${entry.name} using ${skills.slice(0, 3).join(", ")} to solve a realistic ${role} workflow.`,
+        "Documented setup, validation evidence, screenshots, tradeoffs, and recruiter-ready README notes.",
+      ];
+  return {
+    id: `rag-project-${entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    title: `Build role-specific proof: ${entry.name}`,
+    projectName: entry.name,
+    stack: skills.join(", "),
+    why: `${entry.build} This avoids generic keyword stuffing by giving recruiters project evidence that matches the target role.`,
+    bullets: bullets.slice(0, 4),
+    learnBeforeSubmit: skills.slice(0, 6),
+    impact: Math.max(6, 10 - index),
+  };
+}
+
+function tokenSet(value) {
+  return new Set(String(value || "").toLowerCase().match(/[a-z0-9+#./-]{3,}/g) || []);
 }
 
 function buildTailoredProjectFocuses(context, role, missingSkills, result, resumeSummary) {
@@ -3315,8 +3971,8 @@ function buildTailoredProjectFocuses(context, role, missingSkills, result, resum
     ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
     ...(result?.missing_responsibilities ?? []).map((item) => item.requirement || item.responsibility || item.text),
     ...(result?.missing_required_skills ?? []).map((item) => item.keyword),
-  ]).slice(0, 6);
-  const hasTeaching = /trainer|training|teaching|mentor|instructor|education/i.test(`${role} ${resumeSummary}`);
+  ].map(cleanProjectSignal)).filter(Boolean).slice(0, 6);
+  const hasTeaching = /\b(trainer|teaching|mentor|instructor|education|curriculum)\b/i.test(`${role} ${resumeSummary}`) && !/\b(model training|machine learning|data scientist|ml engineer)\b/i.test(`${role} ${resumeSummary}`);
   const hasFullstack = /fullstack|full stack|react|node|frontend|backend|api/i.test(`${role} ${resumeSummary} ${missingSkills.join(" ")}`);
   const hasAgentic = /agentic|generative|langchain|rag|llm|vector|ai/i.test(`${role} ${requirements.join(" ")} ${missingSkills.join(" ")}`);
   const hasCloud = /aws|azure|gcp|docker|kubernetes|deployment|cloud|ci\/cd/i.test(`${requirements.join(" ")} ${missingSkills.join(" ")}`);
@@ -3328,8 +3984,8 @@ function buildTailoredProjectFocuses(context, role, missingSkills, result, resum
   };
 
   if (hasAgentic || context === "ai") {
-    push({ id: "agentic-training-platform", theme: "AI training platform", primary: "LangChain", secondary: "RAG", outcome: "learner feedback quality" });
-    push({ id: "resume-jd-intelligence", theme: "resume-to-JD intelligence", primary: "NLP", secondary: "model evaluation", outcome: "match explanation accuracy" });
+    push({ id: "enterprise-rag-assistant", theme: "enterprise RAG knowledge assistant", primary: "RAG", secondary: "LLM evaluation", outcome: "answer groundedness" });
+    push({ id: "ml-risk-model", theme: "ML risk scoring model", primary: "Python", secondary: "model evaluation", outcome: "prediction quality" });
   }
   if (hasTeaching) {
     push({ id: "technical-training-lab", theme: "technical trainer lab", primary: "curriculum design", secondary: "hands-on labs", outcome: "course completion readiness" });
@@ -3365,7 +4021,7 @@ function buildCoachProjectIdea(focus, role, context, missingSkills, result, resu
     ...defaultToolsForContext(context, focus.id),
   ]).slice(0, 7);
   const roleNoun = role.replace(/\b(role|job)\b/gi, "").trim() || "target role";
-  const requirementText = focus.requirements?.[0] || `requirements for ${roleNoun}`;
+  const requirementText = cleanProjectSignal(focus.requirements?.[0]) || missingSkills.find((skill) => cleanProjectSignal(skill)) || `core ${roleNoun} requirements`;
   const resumeAnchor = cleanDisplayText(resume?.basics?.headline || resume?.experience?.[0]?.role || resume?.projects?.[0]?.name || roleNoun);
 
   return {
@@ -3406,6 +4062,21 @@ function titleCaseProjectName(value) {
 
 function projectTemplateForContext(context, role, primarySkill, secondarySkill, missingSkills) {
   const skillsText = missingSkills.slice(0, 4).join(", ");
+  if (context === "cloud") {
+    return {
+      id: "project-cloud-evidence",
+      title: `Build deployment proof for ${primarySkill}`,
+      projectName: "Cloud Release and Monitoring Lab",
+      stack: `${primarySkill}, Docker, GitHub Actions, monitoring, rollback notes`,
+      why: `For ${role}, this proves platform skill through deployment evidence instead of attaching the keyword to an unrelated app or ML project.`,
+      bullets: [
+        `Deployed a sample service using ${primarySkill}, environment configuration, and release validation to prove hands-on cloud delivery.`,
+        "Documented build steps, deployment logs, monitoring checks, rollback notes, and cost or access assumptions for recruiter review.",
+      ],
+      learnBeforeSubmit: modernLearningForContext(context, missingSkills),
+      impact: 7,
+    };
+  }
   if (context === "ai") {
     return {
       id: "project-ai-evidence",
@@ -3575,38 +4246,163 @@ function modernLearningForContext(context, missingSkills) {
   if (context === "design") add(["Figma components", "usability testing", "design systems", "accessibility basics"]);
   if (context === "security") add(["OWASP Top 10", "SIEM basics", "incident triage", "IAM controls"]);
   if (context === "mobile") add(["app state management", "API integration", "release testing", "mobile UI patterns"]);
+  if (context === "cloud") add(["cloud deployment basics", "Docker release flow", "CI/CD validation", "monitoring and rollback notes"]);
   normalized.forEach((skill) => {
     if (skill.includes("stakeholder")) add(["stakeholder mapping", "communication plan", "status reporting"]);
     if (skill.includes("computer")) add(["computer science fundamentals", "data structures basics"]);
     if (skill.includes("tensorflow")) add(["TensorFlow model training"]);
     if (skill.includes("pytorch")) add(["PyTorch training loops"]);
     if (skill.includes("sql")) add(["SQL joins and window functions"]);
+    if (/(aws|azure|gcp|docker|kubernetes|terraform|ci\/cd)/i.test(skill)) add(["cloud deployment basics", "release validation", "rollback planning"]);
   });
   return learning.slice(0, 5);
 }
 
-function findBestOldLineForSkill(skill, lines, offset = 0) {
+function findBestOldLineForSkill(skill, lines, offset = 0, result = null, resume = null, usedEvidenceKeys = new Set()) {
   if (!lines.length) {
     return {
-      text: `No existing resume bullet proves ${skill} yet. Add a new evidence bullet instead of forcing this keyword into an unrelated line.`,
+      text: `Add this as a new experience bullet; no strong existing line matched ${skill}.`,
       section: "experience",
       synthetic: true,
     };
   }
 
-  const tokens = cleanDisplayText(skill).toLowerCase().split(/[\s/.-]+/).filter((token) => token.length > 2);
-  const scored = lines.map((line) => {
+  const tokens = skillEvidenceTokens(skill);
+  const scored = lines.filter((line) => !usedEvidenceKeys.has(evidenceLineKey(line))).map((line) => {
     const lowered = line.text.toLowerCase();
     const score = tokens.reduce((sum, token) => sum + (lowered.includes(token) ? 1 : 0), 0);
     return { ...line, score };
   });
   scored.sort((left, right) => right.score - left.score || left.text.length - right.text.length);
-  if (scored[0].score > 0) return scored[0];
+  if (scored[0]?.score > 0 && hasStrongContextMatch(scored[0], skill, result, resume)) {
+    usedEvidenceKeys.add(evidenceLineKey(scored[0]));
+    return scored[0];
+  }
+
+  const contextual = scoreContextualResumeLines(skill, lines, result, resume, usedEvidenceKeys);
+  if (contextual.length) {
+    const selected = contextual[offset % Math.min(3, contextual.length)];
+    usedEvidenceKeys.add(evidenceLineKey(selected));
+    return {
+      ...selected,
+      weakEvidence: true,
+      text: selected.text,
+    };
+  }
+
   return {
-    text: `No existing resume bullet proves ${skill} yet. Add a new evidence bullet instead of forcing this keyword into an unrelated line.`,
+    text: `Add this as a new project bullet; no strong existing line matched ${skill}.`,
     section: "projects",
     synthetic: true,
   };
+}
+
+function scoreContextualResumeLines(skill, lines, result, resume, usedEvidenceKeys = new Set()) {
+  const context = detectResumeBulletContext(skill, result, resume);
+  const roleTerms = meaningfulCoachTerms([
+    result?.job_title,
+    result?.detected_role_family,
+    resume?.basics?.headline,
+    ...(result?.unmatched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
+    ...(result?.matched_requirements ?? []).map((item) => item.requirement || item.keyword || item.text),
+  ].join(" "));
+  const skillFamilyTerms = meaningfulCoachTerms(contextualSkillFamilyText(context, skill));
+  const combinedTerms = uniqueDisplayItems([...roleTerms, ...skillFamilyTerms]).slice(0, 28);
+
+  return lines
+    .filter((line) => !usedEvidenceKeys.has(evidenceLineKey(line)))
+    .map((line) => {
+      const text = cleanDisplayText(line.text).toLowerCase();
+      const termHits = combinedTerms.reduce((sum, term) => sum + (text.includes(term.toLowerCase()) ? 1 : 0), 0);
+      const familyHits = skillFamilyTerms.reduce((sum, term) => sum + (text.includes(term.toLowerCase()) ? 1 : 0), 0);
+      const sectionBonus = line.section === "experience" ? 1 : 0;
+      const metricBonus = /\b\d+%|\b\d+x|\b\d+\+|\b\d+\s*(users|apis|reports|models|dashboards|tickets|hours|days|records|tests)\b/i.test(line.text) ? 1 : 0;
+      const score = termHits + familyHits + sectionBonus + metricBonus;
+      return { ...line, score, familyHits, termHits };
+    })
+    .filter((line) => line.score >= 3 && line.familyHits >= 1 && hasStrongContextMatch(line, skill, result, resume))
+    .sort((left, right) => right.score - left.score || left.text.length - right.text.length)
+    .slice(0, 6);
+}
+
+function evidenceLineKey(line) {
+  return `${line?.section || ""}:${line?.itemIndex ?? ""}:${line?.lineIndex ?? ""}:${cleanDisplayText(line?.text || "").slice(0, 80).toLowerCase()}`;
+}
+
+function hasStrongContextMatch(line, skill, result, resume) {
+  const context = detectResumeBulletContext(skill, result, resume);
+  const text = cleanDisplayText(line?.text || "").toLowerCase();
+  const normalizedSkill = cleanDisplayText(skill).toLowerCase();
+  if (normalizedSkill && text.includes(normalizedSkill)) return true;
+  const matcher = CONTEXT_EVIDENCE_PATTERNS[context] || inferEvidencePatternForSkill(skill);
+  if (matcher) return matcher.test(text);
+  return skillEvidenceTokens(skill).some((token) => text.includes(token));
+}
+
+const CONTEXT_EVIDENCE_PATTERNS = {
+  ai: /\b(ai|ml|machine learning|model|prediction|scikit|tensorflow|pytorch|nlp|rag|prompt|vector|embedding|evaluation|training|inference|agentic|generative|llm|langchain|langgraph)\b/i,
+  backend: /\b(api|backend|server|database|postgres|mysql|mongodb|fastapi|django|node|spring|service|endpoint|authentication|authorization|integration|microservice|cache|redis)\b/i,
+  cloud: /\b(aws|azure|gcp|cloud|docker|kubernetes|ci\/cd|jenkins|github actions|terraform|deployment|deployed|release|pipeline|monitoring|rollback|infrastructure|devops|sre)\b/i,
+  data: /\b(sql|data|analytics|dashboard|report|etl|elt|pipeline|kpi|tableau|power bi|pandas|warehouse|insight|snowflake|bigquery|dbt|airflow)\b/i,
+  database: /\b(database|sql|postgres|mysql|sql server|oracle|mongodb|index|query|backup|restore|replication|schema|performance tuning)\b/i,
+  design: /\b(figma|wireframe|prototype|design system|user research|usability|accessibility|ux|ui|persona|journey|handoff)\b/i,
+  finance: /\b(finance|financial|reconciliation|variance|budget|forecast|audit|ledger|invoice|accounting|reporting)\b/i,
+  frontend: /\b(react|javascript|typescript|html|css|ui|frontend|component|accessibility|responsive|browser|user flow|state|redux|vite)\b/i,
+  hr: /\b(hr|recruit|sourcing|candidate|onboarding|employee|payroll|interview|ats|talent|offer)\b/i,
+  it: /\b(ticket|helpdesk|desktop|support|troubleshoot|sla|serviceNow|jira service|active directory|office 365|hardware|software|incident)\b/i,
+  marketing: /\b(marketing|campaign|seo|sem|ga4|google analytics|conversion|content|email|social|attribution|a\/b)\b/i,
+  mobile: /\b(android|ios|flutter|react native|kotlin|swift|mobile|app store|play store|push notification|offline|device)\b/i,
+  network: /\b(network|dns|dhcp|vpn|firewall|routing|switch|lan|wan|tcp|ip|server|linux|windows server|patching)\b/i,
+  product: /\b(stakeholder|requirement|roadmap|backlog|user stor|acceptance|sprint|jira|delivery|priorit|scrum|release planning)\b/i,
+  qa: /\b(test|testing|qa|selenium|playwright|cypress|postman|jmeter|automation|regression|defect|bug|test case|quality)\b/i,
+  sales: /\b(sales|crm|salesforce|pipeline|lead|account|customer|client|deal|forecast|conversion|prospect)\b/i,
+  sap: /\b(sap|erp|s\/4hana|fico|mm|sd|abap|configuration|uat|functional specification|module)\b/i,
+  security: /\b(security|risk|vulnerability|incident|iam|access|audit|siem|alert|control|owasp|soc|splunk|sentinel|mfa)\b/i,
+};
+
+function skillEvidenceTokens(skill) {
+  const weak = new Set(["and", "for", "with", "the", "this", "that", "using", "role", "work", "job", "skill", "skills", "management", "communication", "collaboration", "problem", "solving", "development", "designing", "developing", "researching", "systems", "models", "schemes"]);
+  return cleanDisplayText(skill)
+    .toLowerCase()
+    .split(/[\s/.,()_-]+/)
+    .filter((token) => token.length > 2 && !weak.has(token));
+}
+
+function inferEvidencePatternForSkill(skill) {
+  const normalized = cleanDisplayText(skill).toLowerCase();
+  if (/(selenium|playwright|cypress|postman|jmeter|test|qa|sdet)/i.test(normalized)) return CONTEXT_EVIDENCE_PATTERNS.qa;
+  if (/(sap|erp|s\/4hana|fico|mm|sd|abap)/i.test(normalized)) return CONTEXT_EVIDENCE_PATTERNS.sap;
+  if (/(database|dba|postgres|mysql|sql server|oracle|mongodb|index|query tuning)/i.test(normalized)) return CONTEXT_EVIDENCE_PATTERNS.database;
+  if (/(network|dns|dhcp|vpn|firewall|routing|linux|windows server)/i.test(normalized)) return CONTEXT_EVIDENCE_PATTERNS.network;
+  if (/(helpdesk|desktop|ticket|sla|active directory|office 365|servicenow)/i.test(normalized)) return CONTEXT_EVIDENCE_PATTERNS.it;
+  return null;
+}
+
+function meaningfulCoachTerms(value) {
+  const stop = new Set(["and", "for", "with", "the", "this", "that", "using", "role", "work", "job", "skill", "skills", "required", "preferred", "designing", "developing", "researching", "systems", "models", "schemes"]);
+  return uniqueDisplayItems(String(value || "")
+    .toLowerCase()
+    .match(/[a-z0-9+#./-]{3,}/g) || [])
+    .filter((term) => !stop.has(term) && !/^\d+$/.test(term))
+    .slice(0, 32);
+}
+
+function contextualSkillFamilyText(context, skill) {
+  const normalized = cleanDisplayText(skill);
+  if (context === "ai") return `${normalized} python model evaluation data pipeline experiment tracking api automation prompt retrieval validation`;
+  if (context === "data") return `${normalized} sql dashboard reporting analytics kpi etl data quality business insights`;
+  if (context === "frontend") return `${normalized} react ui component api validation performance accessibility user flow`;
+  if (context === "backend") return `${normalized} api database authentication validation service performance testing`;
+  if (context === "cloud") return `${normalized} deployment docker aws ci cd monitoring release infrastructure`;
+  if (context === "security") return `${normalized} alert risk vulnerability incident access control audit`;
+  if (context === "product") return `${normalized} requirement stakeholder roadmap backlog delivery acceptance criteria`;
+  if (context === "mobile") return `${normalized} android ios flutter react native api offline release testing`;
+  if (context === "design") return `${normalized} figma wireframe prototype user research usability accessibility handoff`;
+  if (context === "marketing") return `${normalized} campaign seo ga4 conversion content attribution reporting`;
+  if (context === "sales") return `${normalized} crm salesforce pipeline lead account conversion forecast`;
+  if (context === "finance") return `${normalized} reconciliation variance budget forecast audit reporting`;
+  if (context === "hr") return `${normalized} recruiting sourcing onboarding ats candidate employee workflow`;
+  return normalized;
 }
 
 function findSkillPlacement(resume, skill) {
@@ -3665,12 +4461,30 @@ function buildSkillPlacementText(skill, placement) {
   return `Add ${quotedSkill} under ${placement.groupName}.`;
 }
 
+function buildDeferredSkillPlacementText(skill, placement, targetPlacement = null) {
+  const quotedSkill = `"${skill}"`;
+  const target = targetPlacement?.label ? ` Add the proof bullet under ${targetPlacement.label}.` : "";
+  if (placement.shouldCreate) {
+    return `After proof exists, create ${placement.groupName} and add ${quotedSkill}.${target}`;
+  }
+  return `After proof exists, add ${quotedSkill} under ${placement.groupName}.${target}`;
+}
+
 function buildSkillGuidance(skill, jobTitle, section, placement) {
   const role = cleanDisplayText(jobTitle || "this role");
   const groupAction = placement.shouldCreate ? `Because your current skills do not have a clean ${placement.groupName} bucket, create that group instead of forcing this into an unrelated section.` : `This keeps ${skill} beside related skills recruiters expect to scan together.`;
   const sectionLabel = section.toLowerCase();
   const proofType = sectionLabel === "projects" ? "project entry" : `${sectionLabel} bullet`;
   return `Use the suggested ${proofType} only after you can honestly explain or build it. This is stronger than a keyword-only add for ${role} because it gives ATS and recruiters proof, not just a term. ${groupAction}`;
+}
+
+function buildMissingEvidenceGuidance(skill, jobTitle, placement, targetPlacement = null) {
+  const role = cleanDisplayText(jobTitle || "this role");
+  const groupAction = placement.shouldCreate
+    ? `Create a proper ${placement.groupName} bucket later if the proof is real.`
+    : `Keep ${skill} near related skills only after the project or work bullet supports it.`;
+  const target = targetPlacement?.label ? ` Best location: ${targetPlacement.label}.` : "";
+  return `No credible resume evidence was found for ${skill}. For ${role}, do not rewrite an unrelated line just to include the keyword. Build or document proof first, then add one concise bullet with tools, validation, and outcome.${target} ${groupAction}`;
 }
 
 function buildPreviewSkillGroups(items) {
@@ -3687,7 +4501,7 @@ function buildPreviewSkillGroups(items) {
   }));
 }
 
-function buildModelResumeLine(skill, result, oldLine, section, resume) {
+function buildModelResumeLine(skill, result, oldLine, section, resume, index = 0, targetPlacement = null) {
   const role = sanitizeRoleLabel(result?.job_title);
   const lowered = cleanDisplayText(skill).toLowerCase();
   const context = detectResumeBulletContext(skill, result, resume);
@@ -3696,7 +4510,17 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
   const oldText = cleanDisplayText(oldLine?.text || oldLine);
 
   if (oldLine?.synthetic) {
-    return buildNewEvidenceBullet(skill, result, resume, context, section);
+    return buildNewEvidenceBullet(skill, result, resume, context, section, index, targetPlacement);
+  }
+
+  if (oldLine?.weakEvidence) {
+    return buildExistingEvidenceUpgrade(skill, result, oldLine, section, resume, context, role);
+  }
+
+  const ragRewrite = buildRagCoachRewrite(skill, result, oldLine, section, resume, context, role, evidenceAnchor);
+
+  if (ragRewrite) {
+    return ragRewrite;
   }
 
   if (context === "product" && /(stakeholder|requirement|roadmap|agile|scrum|jira|prioritization|user stor)/i.test(skill)) {
@@ -3797,28 +4621,302 @@ function buildModelResumeLine(skill, result, oldLine, section, resume) {
   return `Delivered ${role} work using ${skill}, improving execution quality, stakeholder clarity, and measurable outcomes.`;
 }
 
-function buildNewEvidenceBullet(skill, result, resume, context, section) {
+function buildExistingEvidenceUpgrade(skill, result, oldLine, section, resume, context, role) {
+  const oldText = cleanDisplayText(oldLine?.text || "");
+  const base = oldText.replace(/[.!?]*$/, "");
+  const sectionName = section === "Projects" ? "project" : "experience";
+  const compactBullet = buildCompactResumeUpgradeBullet(base, skill, context, role);
+
+  if (base.length > 45) {
+    return `Suggested bullet: ${compactBullet}`;
+  }
+
+  return `Suggested bullet: Add ${skill} proof to a relevant ${sectionName} line with tools, validation, and measurable ${compactOutcomeForContext(context)}.`;
+}
+
+function buildCompactResumeUpgradeBullet(base, skill, context, role) {
+  const actionLine = normalizeResumeBulletLead(base);
+  const proof = compactProofPhraseForSkill(skill, context);
+  const outcome = compactOutcomeForContext(context);
+  const bullet = `${actionLine}, adding ${proof} to improve ${outcome}.`;
+  return limitResumeBulletWords(bullet, 31);
+}
+
+function normalizeResumeBulletLead(base) {
+  const cleaned = cleanDisplayText(base)
+    .replace(/^improve this (experience|project) line to:\s*/i, "")
+    .replace(/\s+only if true\b.*$/i, "")
+    .replace(/\s+so it better matches\b.*$/i, "")
+    .replace(/[.!?]*$/, "");
+  const shortened = cleaned
+    .replace(/\s+to handle\s+/i, " for ")
+    .replace(/\s+to support\s+/i, " for ")
+    .replace(/\s+for multiple client projects\b/i, " for client projects");
+  const words = shortened.split(/\s+/).filter(Boolean);
+  if (words.length <= 16) return shortened;
+  return words.slice(0, 16).join(" ");
+}
+
+function compactProofPhraseForSkill(skill, context) {
+  const cleaned = cleanDisplayText(skill);
+  const lowered = cleaned.toLowerCase();
+  if (["agentic ai", "langchain", "langgraph", "autogen"].includes(lowered)) return `${cleaned} tool-calling checks`;
+  if (lowered === "prompt engineering") return "prompt tests and evaluation notes";
+  if (["generative ai", "rag", "vector db"].includes(lowered)) return `${cleaned} grounding and evaluation`;
+  if (/(machine learning|scikit|tensorflow|pytorch|nlp|model)/i.test(cleaned)) return `${cleaned} validation metrics`;
+  if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|jenkins|github actions)/i.test(cleaned)) return `${cleaned} deployment validation`;
+  if (/(sql|power bi|tableau|etl|dashboard|analytics|pandas|numpy)/i.test(cleaned)) return `${cleaned} KPI and data-quality evidence`;
+  if (/(react|javascript|typescript|api|fastapi|node|django)/i.test(cleaned)) return `${cleaned} tests and validation states`;
+  if (context === "product") return `${cleaned} acceptance criteria`;
+  if (context === "security") return `${cleaned} risk and remediation evidence`;
+  return `${cleaned} validation evidence`;
+}
+
+function compactOutcomeForContext(context) {
+  if (context === "ai") return "grounded automation";
+  if (context === "data") return "reporting accuracy";
+  if (context === "frontend") return "user experience";
+  if (context === "backend") return "API reliability";
+  if (context === "cloud") return "release reliability";
+  if (context === "security") return "risk visibility";
+  if (context === "product") return "delivery clarity";
+  return "business impact";
+}
+
+function limitResumeBulletWords(text, maxWords = 31) {
+  const cleaned = cleanDisplayText(text);
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return cleaned;
+  return `${words.slice(0, maxWords).join(" ").replace(/[,:;]+$/, "")}.`;
+}
+
+function proofClauseForSkill(skill, context) {
+  const cleaned = cleanDisplayText(skill);
+  const lowered = cleaned.toLowerCase();
+  if (["agentic ai", "langchain", "langgraph", "autogen"].includes(lowered)) {
+    return `${cleaned} proof such as tool-calling flow, guardrails, task completion checks, and failure-case handling`;
+  }
+  if (["generative ai", "prompt engineering", "rag", "vector db"].includes(lowered)) {
+    return `${cleaned} proof such as prompt tests, retrieval grounding, citations, evaluation notes, and hallucination checks`;
+  }
+  if (/(machine learning|scikit|tensorflow|pytorch|nlp|model)/i.test(cleaned)) {
+    return `${cleaned} proof such as dataset size, feature choices, baseline metric, validation result, and error analysis`;
+  }
+  if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|jenkins|github actions)/i.test(cleaned)) {
+    return `${cleaned} proof such as deployment steps, environment setup, monitoring, rollback notes, and release validation`;
+  }
+  if (/(sql|power bi|tableau|etl|dashboard|analytics|pandas|numpy)/i.test(cleaned)) {
+    return `${cleaned} proof such as data source, KPI definition, cleaning rules, dashboard insight, and before/after result`;
+  }
+  if (/(react|javascript|typescript|api|fastapi|node|django)/i.test(cleaned)) {
+    return `${cleaned} proof such as user flow, API contract, validation state, tests, and performance or reliability result`;
+  }
+  if (context === "product") return `${cleaned} proof such as stakeholder input, acceptance criteria, prioritization decision, and release impact`;
+  if (context === "security") return `${cleaned} proof such as finding evidence, severity, remediation action, and control validation`;
+  return `${cleaned} proof with tools used, decision made, validation evidence, and measurable result`;
+}
+
+function outcomePhraseForContext(context) {
+  if (context === "ai") return "model quality, grounded output, evaluation discipline, or automation impact";
+  if (context === "data") return "decision quality, reporting accuracy, data trust, or business visibility";
+  if (context === "frontend") return "user experience, reliability, accessibility, or interface performance";
+  if (context === "backend") return "API reliability, maintainability, data consistency, or service performance";
+  if (context === "cloud") return "deployment reliability, operational readiness, cost awareness, or release safety";
+  if (context === "security") return "risk reduction, incident clarity, audit readiness, or control strength";
+  if (context === "product") return "delivery clarity, stakeholder alignment, prioritization, or launch readiness";
+  return "clearer scope, stronger credibility, and measurable business impact";
+}
+
+function buildRagCoachRewrite(skill, result, oldLine, section, resume, context, role, evidenceAnchor) {
+  if (oldLine?.synthetic) return "";
+  const patterns = (result?.market_context ?? []).flatMap((item) => parseRewritePatterns(item?.text || ""));
+  if (!patterns.length) return "";
+  const queryTerms = tokenSet([
+    skill,
+    role,
+    context,
+    section,
+    result?.job_title,
+    result?.detected_role_family,
+    resume?.basics?.headline,
+    resume?.basics?.summary,
+    oldLine?.text,
+  ].join(" "));
+  const oldText = cleanDisplayText(oldLine?.text || "");
+  const synthetic = Boolean(oldLine?.synthetic);
+  const scored = patterns
+    .map((pattern, index) => ({ pattern, score: scoreRewritePattern(pattern, skill, section, context, queryTerms, synthetic), index }))
+    .filter((item) => item.score >= 8)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const selected = scored[0]?.pattern;
+  if (!selected?.template) return "";
+  return fillRewriteTemplate(selected.template, {
+    skill,
+    role,
+    anchor: evidenceAnchor,
+    oldLine: oldText,
+    section,
+    project: cleanDisplayText(resume?.projects?.[0]?.name || "portfolio project"),
+  });
+}
+
+function parseRewritePatterns(text) {
+  const lines = String(text || "").split(/(?=RewritePattern:)/g);
+  return lines
+    .filter((line) => line.trim().startsWith("RewritePattern:"))
+    .map((line) => {
+      const parts = {};
+      const cleaned = line.replace(/^RewritePattern:\s*/i, "");
+      cleaned.split("|").forEach((part) => {
+        const [rawKey, ...valueParts] = part.split("=");
+        const key = cleanDisplayText(rawKey).toLowerCase();
+        const value = valueParts.join("=").trim();
+        if (key) parts[key] = value;
+      });
+      return {
+        domain: cleanDisplayText(parts.domain),
+        roles: parseCommaLikeList(parts.roles),
+        skills: parseCommaLikeList(parts.skills),
+        place: cleanDisplayText(parts.place),
+        useWhen: cleanDisplayText(parts.usewhen),
+        template: cleanDisplayText(parts.template),
+      };
+    })
+    .filter((pattern) => pattern.template);
+}
+
+function scoreRewritePattern(pattern, skill, section, context, queryTerms, synthetic) {
+  const patternText = cleanDisplayText([
+    pattern.domain,
+    pattern.roles.join(" "),
+    pattern.skills.join(" "),
+    pattern.place,
+    pattern.useWhen,
+  ].join(" ")).toLowerCase();
+  const patternTerms = tokenSet(patternText);
+  let score = 0;
+  queryTerms.forEach((term) => {
+    if (patternTerms.has(term)) score += 1;
+  });
+  const normalizedSkill = cleanDisplayText(skill).toLowerCase();
+  if (normalizedSkill && patternText.includes(normalizedSkill)) score += 8;
+  if (context && patternText.includes(context)) score += 3;
+  if (pattern.place && pattern.place.toLowerCase() === section.toLowerCase()) score += 4;
+  if (synthetic && pattern.place.toLowerCase() === "projects") score += 2;
+  return score;
+}
+
+function fillRewriteTemplate(template, values) {
+  const fallbackAnchor = values.anchor || values.project || values.role;
+  return cleanDisplayText(template
+    .replaceAll("{skill}", values.skill || "the target skill")
+    .replaceAll("{role}", values.role || "the target role")
+    .replaceAll("{anchor}", fallbackAnchor)
+    .replaceAll("{old_line}", values.oldLine || fallbackAnchor)
+    .replaceAll("{section}", values.section || "Projects")
+    .replaceAll("{project}", values.project || fallbackAnchor));
+}
+
+function buildNewEvidenceBullet(skill, result, resume, context, section, index = 0, targetPlacement = null) {
   const role = sanitizeRoleLabel(result?.job_title);
-  const anchor = inferEvidenceAnchor(result, resume);
   const lowered = cleanDisplayText(skill).toLowerCase();
-  const projectPrefix = section === "Projects" ? "Build and add a project bullet: " : "Add a work bullet only if true: ";
+  const proof = proofPlanForMissingSkill(skill, result, resume, context, index, targetPlacement);
+  const projectPrefix = section === "Projects" ? "Build proof first: " : "Only add after real proof: ";
+
+  if (targetPlacement?.name) {
+    return limitResumeBulletWords(`Suggested bullet: ${proof.action}`, 28);
+  }
 
   if (["aws", "azure", "gcp", "docker", "kubernetes", "ci/cd", "github actions"].includes(lowered)) {
-    return `${projectPrefix}Created a deployment workflow for ${anchor} using ${skill}, documenting environment setup, validation checks, and release notes to prove hands-on delivery experience.`;
+    return limitResumeBulletWords(`${projectPrefix}${proof.action}; document setup, validation, rollback notes, and one release log.`, 26);
   }
   if (["python", "machine learning", "scikit-learn", "tensorflow", "pytorch", "nlp"].includes(lowered)) {
-    return `${projectPrefix}Built a Python ML workflow for ${anchor}, covering data preparation, model evaluation, error analysis, and README notes explaining the business use case.`;
+    return limitResumeBulletWords(`${projectPrefix}${proof.action}; show dataset, baseline metric, error analysis, and README result.`, 26);
   }
   if (["langchain", "langgraph", "llamaindex", "autogen", "agentic ai", "rag", "vector db"].includes(lowered)) {
-    return `${projectPrefix}Built an agentic AI prototype for ${anchor} with retrieval, tool-calling, prompt tests, and citations so the project demonstrates real ${skill} usage.`;
+    return limitResumeBulletWords(`${projectPrefix}${proof.action}; add tool-calling or retrieval proof, prompt tests, failure cases, and citations.`, 26);
   }
   if (context === "data") {
-    return `${projectPrefix}Built an analytics workflow for ${anchor} using ${skill}, cleaning source data, defining KPIs, and summarizing insights with a dashboard or notebook.`;
+    return limitResumeBulletWords(`${projectPrefix}${proof.action}; define dataset, KPI logic, cleaning rules, and final insight.`, 26);
   }
   if (context === "frontend" || context === "backend") {
-    return `${projectPrefix}Implemented a ${role} feature for ${anchor} using ${skill}, including API flow, validation, test cases, and a short demo note for reviewers.`;
+    return limitResumeBulletWords(`${projectPrefix}${proof.action}; cover flow, API/component design, validation, tests, and demo notes.`, 26);
   }
-  return `${projectPrefix}Built a focused ${role} project using ${skill}, with problem statement, implementation steps, validation evidence, and measurable outcome documented in the project README.`;
+  return limitResumeBulletWords(`${projectPrefix}${proof.action}; document problem, implementation, validation, and measurable outcome for ${role}.`, 26);
+}
+
+function proofPlanForMissingSkill(skill, result, resume, context, index = 0, targetPlacement = null) {
+  const role = sanitizeRoleLabel(result?.job_title);
+  if (targetPlacement?.name) {
+    return { action: buildTargetedAddBullet(skill, context, targetPlacement, role) };
+  }
+  const directTemplate = projectTemplateForContext(context, role, skill, role, [skill]);
+  if (context === "cloud") {
+    return { action: `Create "${directTemplate.projectName}" using ${directTemplate.stack}` };
+  }
+  const catalog = buildRagProjectIdeas(result, resume, [skill], context, role);
+  const selected = catalog[index % Math.max(1, catalog.length)] || projectTemplateForContext(context, role, skill, role, [skill]);
+  const projectName = cleanDisplayText(selected?.projectName || selected?.title || `${role} proof project`);
+  const stack = cleanDisplayText(selected?.stack || skill);
+  const lead = [
+    `Create "${projectName}" using ${stack}`,
+    `Build a small "${projectName}" case study with ${skill}`,
+    `Document a hands-on "${projectName}" proof using ${skill}`,
+    `Finish one realistic "${projectName}" workflow that proves ${skill}`,
+  ][index % 4];
+  return { action: lead };
+}
+
+function buildTargetedAddBullet(skill, context, targetPlacement, role) {
+  const skillName = cleanDisplayText(skill);
+  const targetName = cleanDisplayText(targetPlacement.name || targetPlacement.label || role);
+  const tech = cleanDisplayText(targetPlacement.tech);
+  const stackSuffix = tech && !tech.toLowerCase().includes(skillName.toLowerCase()) ? ` alongside ${tech.split(",").slice(0, 3).map(cleanDisplayText).filter(Boolean).join(", ")}` : "";
+  const lowered = skillName.toLowerCase();
+
+  if (/(aws|azure|gcp|docker|kubernetes|ci\/cd|jenkins|github actions)/i.test(skillName)) {
+    return `Added ${skillName} deployment workflow for ${targetName}${stackSuffix}, documenting setup, validation, rollback notes, and release evidence.`;
+  }
+  if (/(agentic ai|langchain|langgraph|autogen)/i.test(skillName)) {
+    return `Enhanced ${targetName} with ${skillName} tool-calling checks, failure handling, and evaluation notes to improve grounded automation.`;
+  }
+  if (/(generative ai|prompt engineering|rag|vector db|llm)/i.test(skillName)) {
+    return `Enhanced ${targetName} with ${skillName} grounding, prompt tests, citations, and evaluation notes to improve answer reliability.`;
+  }
+  if (/(machine learning|scikit|tensorflow|pytorch|nlp|model)/i.test(skillName)) {
+    return `Improved ${targetName} with ${skillName} validation metrics, error analysis, and README results to strengthen model credibility.`;
+  }
+  if (/(sql|power bi|tableau|etl|dashboard|analytics|pandas|numpy)/i.test(skillName)) {
+    return `Enhanced ${targetName} with ${skillName} data checks, KPI logic, and outcome notes to improve reporting accuracy.`;
+  }
+  if (/(react|javascript|typescript|api|fastapi|node|django)/i.test(skillName)) {
+    return `Improved ${targetName} with ${skillName} validation, tests, and error handling to strengthen user flow reliability.`;
+  }
+  if (context === "product" || /(stakeholder|requirement|roadmap|scrum|jira|priorit)/i.test(lowered)) {
+    return `Added ${skillName} evidence to ${targetName}, documenting stakeholders, priorities, decisions, and outcome for clearer delivery ownership.`;
+  }
+  if (context === "security") {
+    return `Added ${skillName} evidence to ${targetName}, documenting risk, remediation, validation, and control impact.`;
+  }
+  return `Added ${skillName} evidence to ${targetName}, documenting tools, validation, and measurable outcome for ${role}.`;
+}
+
+function ensureUniqueCoachSuggestion(text, skill, result, resume, context, section, usedFingerprints, index = 0, targetPlacement = null) {
+  const cleaned = cleanDisplayText(text);
+  const fingerprint = cleaned
+    .toLowerCase()
+    .replaceAll(cleanDisplayText(skill).toLowerCase(), "{skill}")
+    .replace(/\b(agentic ai|generative ai|prompt engineering|machine learning|react|fastapi|docker|aws|sql)\b/g, "{skill}")
+    .replace(/"[^"]+"/g, "{project}")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
+  if (!usedFingerprints.has(fingerprint)) {
+    usedFingerprints.add(fingerprint);
+    return cleaned;
+  }
+  const fallback = buildNewEvidenceBullet(skill, result, resume, context, section, index + usedFingerprints.size + 1, targetPlacement);
+  usedFingerprints.add(`${fingerprint}:${skill.toLowerCase()}`);
+  return fallback;
 }
 
 function inferEvidenceAnchor(result, resume) {
@@ -3855,8 +4953,31 @@ function buildDataSkillBullet(skill, lowered) {
 
 function sanitizeRoleLabel(jobTitle) {
   const role = cleanDisplayText(jobTitle || "target role");
-  if (!role || /score|match|requirement|description/i.test(role)) return "backend";
+  if (!isCleanProfessionalRoleTitle(role)) return "target role";
   return role;
+}
+
+function professionalRoleLabel(result, resume) {
+  const candidates = [
+    result?.job_title,
+    result?.detected_role_family,
+    result?.detected_resume_role_family,
+    resume?.basics?.headline,
+    resume?.experience?.[0]?.role,
+  ].map(cleanDisplayText);
+  return candidates.find(isCleanProfessionalRoleTitle) || "target role";
+}
+
+function isCleanProfessionalRoleTitle(value) {
+  const text = cleanDisplayText(value);
+  if (!text || text.length > 72) return false;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 9) return false;
+  if (/[.!?]$/.test(text)) return false;
+  if (text.includes(",") && words.length > 4) return false;
+  if (/\b(score|match|requirement|description|responsibilit|qualification|permanent|full time|part time|contract)\b/i.test(text)) return false;
+  if (/^(designing|developing|researching|building|creating|working|partnering|managing|owning|responsible|must|should|will)\b/i.test(text)) return false;
+  return /\b(engineer|developer|scientist|analyst|manager|designer|consultant|administrator|specialist|architect|tester|qa|sre|devops|product|scrum|support|sales|marketing|finance|hr|security|data|machine learning|ai|backend|frontend|full stack)\b/i.test(text);
 }
 
 function detectResumeBulletContext(skill, result, resume) {

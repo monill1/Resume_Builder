@@ -17,3 +17,5 @@ backend/phone*.png
 backend/pin*.png
 frontend/node_modules/
 frontend/dist/
+frontend-server.log
+frontend-server.err

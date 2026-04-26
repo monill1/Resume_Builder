@@ -442,6 +442,13 @@ class ATSExplanationPanel(BaseModel):
     risks: List[str] = Field(default_factory=list)
 
 
+class ATSMarketContextItem(BaseModel):
+    source: str
+    title: str
+    text: str
+    score: float = Field(..., ge=0.0)
+
+
 class ATSAnalysisResponse(BaseModel):
     job_url: Optional[HttpUrl] = None
     job_title: str
@@ -496,6 +503,7 @@ class ATSAnalysisResponse(BaseModel):
     parse_preview: str
     comparison_view: List[ATSComparisonItem] = Field(default_factory=list)
     explanation_panel: ATSExplanationPanel
+    market_context: List[ATSMarketContextItem] = Field(default_factory=list)
     analyzed_resume: Optional[ResumePayload] = None
 
 

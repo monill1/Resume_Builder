@@ -20,7 +20,7 @@ from .job_description import JobDescriptionAnalysis
 from .resume_parser import ResumeAnalysis
 
 
-def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> dict[str, object]:
+def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis, market_context: list[dict[str, object]] | None = None) -> dict[str, object]:
     config = ATS_SCORING_CONFIG
     assessments = build_term_assessments(job, resume)
     role_match = match_role(job, resume)
@@ -40,6 +40,9 @@ def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> dict[st
         "role_alignment": role_match.score,
     }
     job_match_raw = round(sum(job_match_weights[key] * value for key, value in job_breakdown.items()))
+    role_context_fit = _score_role_context_fit(job, resume, assessments, role_match, semantic_match, job_breakdown)
+    job_breakdown["role_context_fit"] = role_context_fit
+    job_match_raw = round(0.78 * job_match_raw + 0.22 * role_context_fit)
 
     gap_analysis = build_gap_analysis(job, resume, assessments, role_match)
     semantic_critical_gaps = _semantic_critical_gaps(semantic_match)
@@ -67,6 +70,7 @@ def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> dict[st
         readability.formatting_issues,
         readability.stuffing_warnings,
         role_match,
+        market_context=market_context or [],
     )
     comparison_view = _build_comparison_view(job, assessments)
     confidence_score, confidence_factors = _confidence_score(job, resume, assessments, readability.parsing_confidence, job_match_score, semantic_match)
@@ -147,6 +151,7 @@ def score_resume(job: JobDescriptionAnalysis, resume: ResumeAnalysis) -> dict[st
         "stuffing_warnings": readability.stuffing_warnings,
         "suggestions": suggestions_grouped,
         "improvement_suggestions": flatten_suggestions(suggestions_grouped),
+        "market_context": market_context or [],
         "parse_preview": resume.parse_preview,
         "comparison_view": comparison_view,
         "explanation_panel": explanation_panel,
@@ -294,6 +299,53 @@ def _score_projects(job: JobDescriptionAnalysis, resume: ResumeAnalysis, assessm
     return _clamp_score(round(score))
 
 
+def _score_role_context_fit(
+    job: JobDescriptionAnalysis,
+    resume: ResumeAnalysis,
+    assessments: list[TermAssessment],
+    role_match,
+    semantic_match: SemanticMatchResult,
+    job_breakdown: dict[str, int],
+) -> int:
+    important = [item for item in assessments if item.importance in {"high", "medium"}]
+    if important:
+        strong_evidence = sum(1 for item in important if item.evidence_tier >= 3)
+        partial_evidence = sum(1 for item in important if item.evidence_tier == 2)
+        skills_only = sum(1 for item in important if item.is_skills_only)
+        evidence_depth = round(100 * min(1.0, (strong_evidence + 0.55 * partial_evidence) / len(important)))
+        skills_only_penalty = min(18, skills_only * 3)
+    else:
+        evidence_depth = 45
+        skills_only_penalty = 0
+
+    requirement_count = len(semantic_match.requirement_matches)
+    semantic_score = semantic_match.semantic_requirement_match_score if requirement_count else job_breakdown["skills_match"]
+    responsibility_score = semantic_match.responsibility_match_score
+    role_score = role_match.score
+    projects_score = job_breakdown["projects_relevance"]
+    years_score = job_breakdown["seniority_years_match"]
+    experience_score = job_breakdown["experience_relevance"]
+
+    weighted = (
+        0.20 * role_score
+        + 0.22 * semantic_score
+        + 0.18 * responsibility_score
+        + 0.14 * experience_score
+        + 0.10 * projects_score
+        + 0.08 * years_score
+        + 0.08 * evidence_depth
+    )
+
+    if role_match.job_family and role_match.resume_family and role_match.family_similarity < 0.45:
+        weighted -= 10
+    if requirement_count >= 3 and semantic_match.strong_bullet_match_count == 0:
+        weighted -= 8
+    if job.required_skills and not any(item.term in job.required_skills and item.evidence_tier >= 3 for item in assessments):
+        weighted -= 6
+    weighted -= skills_only_penalty
+    return _clamp_score(round(weighted))
+
+
 def _score_education(job: JobDescriptionAnalysis, resume: ResumeAnalysis, assessments: list[TermAssessment]) -> int:
     config = ATS_SCORING_CONFIG["education"]
     education_text = resume.section_text["education"]
@@ -405,6 +457,13 @@ def _calibrate_job_match(
             caps["weak_semantic_or_responsibility"],
             "Requirement and responsibility bullet evidence is weak.",
             f"semantic={semantic_match.semantic_requirement_match_score}, responsibility={semantic_match.responsibility_match_score}",
+        )
+    if job_breakdown.get("role_context_fit", 100) < 45:
+        add_cap(
+            "weak_role_context_fit",
+            min(caps["weak_semantic_or_responsibility"], 66),
+            "Resume evidence does not strongly fit the JD role, responsibilities, required skills, and seniority together.",
+            f"role_context_fit={job_breakdown.get('role_context_fit')}",
         )
     if requirement_match_count >= 3 and semantic_match.strong_bullet_match_count == 0:
         add_cap(
